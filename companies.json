@@ -1,0 +1,32 @@
+[
+  {
+    "_id": "69aace67ccb26bdd69dcafc2",
+    "name": "Taj Hotel Mumbai",
+    "status": "Approved"
+  },
+  {
+    "_id": "69aace67ccb26bdd69dcafc3",
+    "name": "Pizza Palace",
+    "status": "Approved"
+  },
+  {
+    "_id": "69aace67ccb26bdd69dcafc4",
+    "name": "Apollo Hospital",
+    "status": "Rejected"
+  },
+  {
+    "_id": "69aace67ccb26bdd69dcafc5",
+    "name": "DLF Cyber City",
+    "status": "Rejected"
+  },
+  {
+    "_id": "69aace67ccb26bdd69dcafc6",
+    "name": "Lakme Salon",
+    "status": "Approved"
+  },
+  {
+    "_id": "69aace67ccb26bdd69dcafc7",
+    "name": "Sony Electronics",
+    "status": "Approved"
+  }
+]
