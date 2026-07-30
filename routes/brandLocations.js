@@ -1,5 +1,12 @@
 const BrandLocation = require('../models/BrandLocation');
-const { protect, authorize, attachOwnedBrands } = require('../middleware/authMiddleware');
+const {
+    protect,
+    authorize,
+    attachOwnedBrands,
+    isBrandScoped,
+    ownsBrand,
+    BRAND_SCOPED_ROLES
+} = require('../middleware/authMiddleware');
 const express = require('express');
 const router = express.Router();
 
@@ -8,11 +15,12 @@ const router = express.Router();
 router.get('/', protect, attachOwnedBrands, async (req, res) => {
     try {
         let query = {};
-        const isOwner = ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role);
-        const forceOwned = req.query.owned === 'true';
 
-        if (forceOwned || isOwner) {
-            query.brandId = { $in: req.ownedBrandIds || [] };
+        if (isBrandScoped(req.user) || req.query.owned === 'true') {
+            // Honour a requested brand only when it is one of theirs.
+            query.brandId = ownsBrand(req, req.query.brandId)
+                ? req.query.brandId
+                : { $in: req.ownedBrandIds || [] };
         } else if (req.query.brandId) {
             query.brandId = req.query.brandId;
         }
@@ -32,14 +40,12 @@ router.get('/', protect, attachOwnedBrands, async (req, res) => {
 
 // @desc    Create brand location
 // @route   POST /api/brand-locations
-router.post('/', protect, authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), attachOwnedBrands, async (req, res) => {
+router.post('/', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, async (req, res) => {
     try {
         const { brandId } = req.body;
-        
-        if (req.user.role !== 'Super Admin') {
-            if (!req.ownedBrandIds.map(id => id.toString()).includes(brandId)) {
-                return res.status(403).json({ msg: 'Not authorized for this brand' });
-            }
+
+        if (isBrandScoped(req.user) && !ownsBrand(req, brandId)) {
+            return res.status(403).json({ msg: 'Not authorized for this brand' });
         }
 
         const location = new BrandLocation(req.body);
@@ -52,15 +58,13 @@ router.post('/', protect, authorize('Super Admin', 'Brand Owner', 'Company Owner
 
 // @desc    Update brand location
 // @route   PUT /api/brand-locations/:id
-router.put('/:id', protect, authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), attachOwnedBrands, async (req, res) => {
+router.put('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, async (req, res) => {
     try {
         let location = await BrandLocation.findById(req.params.id);
         if (!location) return res.status(404).json({ msg: 'Location not found' });
- 
-        if (req.user.role !== 'Super Admin') {
-            if (!req.ownedBrandIds.map(id => id.toString()).includes(location.brandId.toString())) {
-                return res.status(403).json({ msg: 'Not authorized for this location' });
-            }
+
+        if (isBrandScoped(req.user) && !ownsBrand(req, location.brandId)) {
+            return res.status(403).json({ msg: 'Not authorized for this location' });
         }
 
         location = await BrandLocation.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -72,15 +76,13 @@ router.put('/:id', protect, authorize('Super Admin', 'Brand Owner', 'Company Own
 
 // @desc    Delete brand location
 // @route   DELETE /api/brand-locations/:id
-router.delete('/:id', protect, authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), attachOwnedBrands, async (req, res) => {
+router.delete('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, async (req, res) => {
     try {
         const location = await BrandLocation.findById(req.params.id);
         if (!location) return res.status(404).json({ msg: 'Location not found' });
- 
-        if (req.user.role !== 'Super Admin') {
-            if (!req.ownedBrandIds.map(id => id.toString()).includes(location.brandId.toString())) {
-                return res.status(403).json({ msg: 'Not authorized for this location' });
-            }
+
+        if (isBrandScoped(req.user) && !ownsBrand(req, location.brandId)) {
+            return res.status(403).json({ msg: 'Not authorized for this location' });
         }
 
         await BrandLocation.findByIdAndDelete(req.params.id);

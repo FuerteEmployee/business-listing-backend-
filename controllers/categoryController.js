@@ -1,4 +1,5 @@
 const Category = require('../models/Category');
+const { isBrandScoped, ownsBrand } = require('../middleware/authMiddleware');
 
 // @desc    Get all categories
 // @route   GET /api/categories
@@ -10,8 +11,9 @@ const getAllCategories = async (req, res) => {
             query.parent = parentId === 'null' ? null : parentId;
         }
 
-        // Scoping for Brand Owner: show global categories OR their own brand categories
-        if (req.user && (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner')) {
+        // Scoping for brand owners: global categories plus their own brand categories.
+        // Global ones must stay visible - their listing's own category is usually global.
+        if (isBrandScoped(req.user)) {
             query.$or = [
                 { brandId: null },
                 { brandId: { $in: req.ownedBrandIds || [] } }
@@ -42,13 +44,13 @@ const createCategory = async (req, res) => {
             return res.status(400).json({ msg: 'Category with this slug already exists' });
         }
 
-        // Authorization check for Brand Owner
+        // Brand owners may only create categories under a brand they own
         let finalBrandId = brandId || null;
-        if (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') {
+        if (isBrandScoped(req.user)) {
             if (!brandId) {
                 return res.status(400).json({ msg: 'Brand ID is required for brand-specific categories' });
             }
-            if (!req.ownedBrandIds.map(id => id.toString()).includes(brandId)) {
+            if (!ownsBrand(req, brandId)) {
                 return res.status(403).json({ msg: 'Not authorized to create category for this brand' });
             }
             finalBrandId = brandId;
@@ -91,11 +93,9 @@ const updateCategory = async (req, res) => {
         let category = await Category.findById(categoryId);
         if (!category) return res.status(404).json({ msg: 'Category not found' });
 
-        // Authorization check for Brand Owner
-        if (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') {
-            if (!category.brandId || !req.ownedBrandIds.map(id => id.toString()).includes(category.brandId.toString())) {
-                return res.status(403).json({ msg: 'Not authorized to update this category' });
-            }
+        // Brand owners may only touch their own brand categories, never global ones
+        if (isBrandScoped(req.user) && !ownsBrand(req, category.brandId)) {
+            return res.status(403).json({ msg: 'Not authorized to update this category' });
         }
         const oldParent = category.parent;
 
@@ -137,11 +137,9 @@ const deleteCategory = async (req, res) => {
         const category = await Category.findById(req.params.id);
         if (!category) return res.status(404).json({ msg: 'Category not found' });
 
-        // Authorization check for Brand Owner
-        if (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') {
-            if (!category.brandId || !req.ownedBrandIds.map(id => id.toString()).includes(category.brandId.toString())) {
-                return res.status(403).json({ msg: 'Not authorized to delete this category' });
-            }
+        // Brand owners may only touch their own brand categories, never global ones
+        if (isBrandScoped(req.user) && !ownsBrand(req, category.brandId)) {
+            return res.status(403).json({ msg: 'Not authorized to delete this category' });
         }
         // Block deletion if subcategories exist
         if (category.subCount > 0) {

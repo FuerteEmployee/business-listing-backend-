@@ -10,16 +10,24 @@ const {
     reorderProducts
 } = require('../controllers/productController');
 
-const { protect, authorize, attachOwnedBrands, optionalProtect } = require('../middleware/authMiddleware');
+const {
+    protect,
+    authorize,
+    attachOwnedBrands,
+    optionalAuth,
+    BRAND_SCOPED_ROLES
+} = require('../middleware/authMiddleware');
 
-// Public routes
-router.route('/').get(optionalProtect, getProducts);
+// Public routes. The listing endpoint uses optionalAuth so that a signed-in brand
+// owner is scoped to their own products, while anonymous visitors still see the
+// public catalogue.
+router.route('/').get(optionalAuth, getProducts);
 router.route('/slug/:slug').get(getProductBySlug);
-router.route('/:id').get(optionalProtect, getProduct);
+router.route('/:id').get(optionalAuth, getProduct);
 
-// Protected routes (Admin / Brand Owner)
+// Protected routes (Admin / brand owners)
 router.use(protect);
-router.use(authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'));
+router.use(authorize('Super Admin', ...BRAND_SCOPED_ROLES));
 router.use(attachOwnedBrands);
 
 router.route('/').post(createProduct);

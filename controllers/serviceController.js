@@ -1,5 +1,6 @@
 const Service = require('../models/Service');
 const slugify = require('slugify');
+const { isBrandScoped, ownsBrand } = require('../middleware/authMiddleware');
 
 // Get all services
 exports.getServices = async (req, res) => {
@@ -12,14 +13,13 @@ exports.getServices = async (req, res) => {
         if (status) query.status = status;
         if (isFeatured === 'true') query.featured = true;
 
-        // Scoping for Brand Owner / Dashboard
-        if (req.user) {
-            const isOwner = req.user.role === 'Brand Owner' || req.user.role === 'Company Owner';
-            const forceOwned = req.query.owned === 'true';
-
-            if (forceOwned || isOwner) {
-                query.listingId = { $in: req.ownedBrandIds || [] };
-            }
+        // Scoping: an owner only ever sees services of the brands they own.
+        // A requested listingId is honoured only when they own it, so filtering by
+        // one of their own brands still works while other brands stay invisible.
+        if (req.user && (isBrandScoped(req.user) || req.query.owned === 'true')) {
+            query.listingId = ownsBrand(req, listingId)
+                ? listingId
+                : { $in: req.ownedBrandIds || [] };
         }
 
         let dbQuery = Service.find(query)
@@ -92,11 +92,9 @@ exports.createService = async (req, res) => {
             req.body.slug = slugify(req.body.name, { lower: true, strict: true });
         }
         
-        // Validation for Brand Owner: must belong to their brand
-        if (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') {
-            if (!req.ownedBrandIds.map(id => id.toString()).includes(req.body.listingId)) {
-                return res.status(403).json({ success: false, error: 'Not authorized to add service to this brand' });
-            }
+        // Validation for brand owners: the service must belong to one of their brands
+        if (isBrandScoped(req.user) && !ownsBrand(req, req.body.listingId)) {
+            return res.status(403).json({ success: false, error: 'Not authorized to add service to this brand' });
         }
 
         const service = await Service.create(req.body);
@@ -131,13 +129,13 @@ exports.updateService = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Service not found' });
         }
 
-        // Authorization check for Brand Owner
-        if (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') {
-            if (!req.ownedBrandIds.map(id => id.toString()).includes(service.listingId.toString())) {
+        // Authorization check for brand owners
+        if (isBrandScoped(req.user)) {
+            if (!ownsBrand(req, service.listingId)) {
                 return res.status(403).json({ success: false, error: 'Not authorized to update this service' });
             }
             // Also prevent changing listingId to a brand they don't own
-            if (req.body.listingId && !req.ownedBrandIds.map(id => id.toString()).includes(req.body.listingId)) {
+            if (req.body.listingId && !ownsBrand(req, req.body.listingId)) {
                 return res.status(403).json({ success: false, error: 'Not authorized to move service to this brand' });
             }
         }
@@ -165,8 +163,8 @@ exports.deleteService = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Service not found' });
         }
 
-        // Authorization check for Brand Owner
-        if ((req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') && !req.ownedBrandIds.map(id => id.toString()).includes(service.listingId.toString())) {
+        // Authorization check for brand owners
+        if (isBrandScoped(req.user) && !ownsBrand(req, service.listingId)) {
             return res.status(403).json({ success: false, error: 'Not authorized to delete this service' });
         }
 

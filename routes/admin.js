@@ -73,6 +73,7 @@ const {
     cloneBroadcast,
     getSegmentsData
 } = require('../controllers/broadcastController');
+const { bulkImport } = require('../controllers/bulkImportController');
 
 // Protect all admin routes - requires authentication and IP whitelisting
 router.use(protect);
@@ -116,6 +117,10 @@ router.get('/listings/export/csv', checkPermission('reporting', 'export'), expor
 router.get('/listings/:id/audit', checkPermission('listingManagement', 'read'), getListingAuditTrail);
 router.put('/listings/:id/rank', checkPermission('listingManagement', 'write'), updateListingRank);
 router.post('/listings/reorder', checkPermission('listingManagement', 'write'), bulkReorderListings);
+
+// ==================== SPREADSHEET IMPORT ====================
+// Combined categories + users + listings import from one workbook.
+router.post('/import', checkPermission('listingManagement', 'write'), bulkImport);
 
 // ==================== REVIEW MODERATION ====================
 router.get('/reviews', checkPermission('reviewModeration', 'read'), getAllReviewsAdmin);

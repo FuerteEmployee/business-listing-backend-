@@ -18,45 +18,45 @@ const {
     getMerchantAnalytics
 } = require('../controllers/merchantController');
 
-const { protect, authorize, attachOwnedBrands } = require('../middleware/authMiddleware');
+const { protect, authorize, attachOwnedBrands, BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
 
 // All routes require authentication
 router.use(protect);
 router.use(attachOwnedBrands);
 
 // ==================== DASHBOARD ====================
-router.get('/dashboard', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantDashboard);
+router.get('/dashboard', authorize(...BRAND_SCOPED_ROLES), getMerchantDashboard);
 
 // ==================== PRODUCTS ====================
 router.route('/products')
-    .get(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantProducts)
-    .post(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), createMerchantProduct);
+    .get(authorize(...BRAND_SCOPED_ROLES), getMerchantProducts)
+    .post(authorize(...BRAND_SCOPED_ROLES), createMerchantProduct);
 
 router.route('/products/:productId')
-    .put(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateMerchantProduct)
-    .delete(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), deleteMerchantProduct);
+    .put(authorize(...BRAND_SCOPED_ROLES), updateMerchantProduct)
+    .delete(authorize(...BRAND_SCOPED_ROLES), deleteMerchantProduct);
 
-router.post('/products/:productId/submit', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), submitProductForApproval);
+router.post('/products/:productId/submit', authorize(...BRAND_SCOPED_ROLES), submitProductForApproval);
 
 // ==================== SERVICES ====================
 router.route('/services')
-    .get(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantServices)
-    .post(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), createMerchantService);
+    .get(authorize(...BRAND_SCOPED_ROLES), getMerchantServices)
+    .post(authorize(...BRAND_SCOPED_ROLES), createMerchantService);
 
 router.route('/services/:serviceId')
-    .put(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateMerchantService);
+    .put(authorize(...BRAND_SCOPED_ROLES), updateMerchantService);
 
 // ==================== ORDERS ====================
-router.get('/orders', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantOrders);
-router.get('/orders/:orderId', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantOrderDetails);
-router.put('/orders/:orderId/status', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateOrderStatus);
+router.get('/orders', authorize(...BRAND_SCOPED_ROLES), getMerchantOrders);
+router.get('/orders/:orderId', authorize(...BRAND_SCOPED_ROLES), getMerchantOrderDetails);
+router.put('/orders/:orderId/status', authorize(...BRAND_SCOPED_ROLES), updateOrderStatus);
 
 // ==================== INVENTORY ====================
-router.get('/inventory/alerts', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getLowStockAlerts);
-router.put('/inventory/products/:productId/stock', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateProductStock);
+router.get('/inventory/alerts', authorize(...BRAND_SCOPED_ROLES), getLowStockAlerts);
+router.put('/inventory/products/:productId/stock', authorize(...BRAND_SCOPED_ROLES), updateProductStock);
 
 // ==================== ANALYTICS ====================
-router.get('/analytics', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantAnalytics);
+router.get('/analytics', authorize(...BRAND_SCOPED_ROLES), getMerchantAnalytics);
 
 // ==================== ADMIN ROUTES ====================
 // Admin can access any merchant's data

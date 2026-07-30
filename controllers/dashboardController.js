@@ -10,6 +10,7 @@ const ClaimRequest = require('../models/ClaimRequest');
 const Transaction = require('../models/Transaction');
 const City = require('../models/City');
 const RBACRole = require('../models/RBACRole');
+const { isBrandScoped } = require('../middleware/authMiddleware');
 
 const KPI_WINDOW_DAYS = 30;
 const TIMELINE_DAYS = 7;
@@ -66,7 +67,7 @@ const aggregateDailyCounts = async (Model, match, startDate) => {
 // @route   GET /api/dashboard/stats
 const getDashboardStats = async (req, res) => {
     try {
-        const isBrandOwner = req.user && (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner');
+        const isBrandOwner = isBrandScoped(req.user);
         let companyQuery = {};
         let productQuery = {};
         let serviceQuery = {};

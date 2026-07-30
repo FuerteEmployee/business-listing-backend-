@@ -7,6 +7,7 @@ const State = require('../models/State');
 const City = require('../models/City');
 const Area = require('../models/Area');
 const slugify = require('slugify');
+const { isBrandScoped } = require('../middleware/authMiddleware');
 
 
 
@@ -308,9 +309,8 @@ const updateCompany = async (req, res) => {
         let company = await Company.findById(req.params.id);
         if (!company) return res.status(404).json({ msg: 'Company not found' });
 
-        // Authorization check for Brand Owner
-        const isOwner = req.user.role === 'Brand Owner' || req.user.role === 'Company Owner';
-        if (isOwner && company.owner.toString() !== req.user._id.toString()) {
+        // Brand owners may only update a company they own (unclaimed = owner null)
+        if (isBrandScoped(req.user) && String(company.owner) !== String(req.user._id)) {
             return res.status(403).json({ msg: 'Not authorized to update this company' });
         }
 
@@ -328,8 +328,8 @@ const updateCompany = async (req, res) => {
             };
         }
 
-        // For Brand Owner, don't allow changing the owner
-        if (req.user.role === 'Brand Owner') {
+        // A brand owner must not be able to reassign their listing to someone else
+        if (isBrandScoped(req.user)) {
             delete body.owner;
         }
 
@@ -398,9 +398,8 @@ const deleteCompany = async (req, res) => {
         const company = await Company.findById(req.params.id);
         if (!company) return res.status(404).json({ msg: 'Company not found' });
 
-        // Authorization check for Brand Owner
-        const isOwner = req.user.role === 'Brand Owner' || req.user.role === 'Company Owner';
-        if (isOwner && company.owner.toString() !== req.user._id.toString()) {
+        // Brand owners may only delete a company they own (unclaimed = owner null)
+        if (isBrandScoped(req.user) && String(company.owner) !== String(req.user._id)) {
             return res.status(403).json({ msg: 'Not authorized to delete this company' });
         }
 

@@ -15,35 +15,19 @@ const {
     postQuestion,
     importOSM
 } = require('../controllers/companyController');
-const { protect, attachOwnedBrands, checkPermission } = require('../middleware/authMiddleware');
+const { protect, attachOwnedBrands, checkPermission, optionalAuth } = require('../middleware/authMiddleware');
 
 // @route   GET /api/companies/autocomplete
 router.get('/autocomplete', autocomplete);
 
 // @route   GET /api/companies
-router.get('/', (req, res, next) => {
-    const { protect, attachOwnedBrands } = require('../middleware/authMiddleware');
-    if (req.headers.authorization) {
-        return protect(req, res, (err) => {
-            if (err) return next(); // Ignore auth errors for public route
-            attachOwnedBrands(req, res, next);
-        });
-    }
-    next();
-}, getAllCompanies);
+router.get('/', optionalAuth, getAllCompanies);
 
 // @route   GET /api/companies/slug/:slug
 router.get('/slug/:slug', getCompanyBySlug);
 
 // @route   POST /api/companies
-router.post('/', (req, res, next) => {
-    // Optional protect: if token exists, attach user, but don't block if not
-    const { protect } = require('../middleware/authMiddleware');
-    if (req.headers.authorization) {
-        return protect(req, res, next);
-    }
-    next();
-}, createCompany);
+router.post('/', optionalAuth, createCompany);
 
 // @route   PUT /api/companies/:id
 router.put('/:id', protect, attachOwnedBrands, updateCompany);

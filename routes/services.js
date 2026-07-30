@@ -9,15 +9,23 @@ const {
     reorderServices
 } = require('../controllers/serviceController');
 
-const { protect, authorize, attachOwnedBrands } = require('../middleware/authMiddleware');
+const {
+    protect,
+    authorize,
+    attachOwnedBrands,
+    optionalAuth,
+    BRAND_SCOPED_ROLES
+} = require('../middleware/authMiddleware');
 
-// Public routes
-router.route('/').get(getServices);
+// Public routes. The listing endpoint uses optionalAuth so that a signed-in brand
+// owner is scoped to their own services, while anonymous visitors still see the
+// public catalogue.
+router.route('/').get(optionalAuth, getServices);
 router.route('/:id').get(getService);
 
-// Protected routes (Admin / Brand Owner)
+// Protected routes (Admin / brand owners)
 router.use(protect);
-router.use(authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'));
+router.use(authorize('Super Admin', ...BRAND_SCOPED_ROLES));
 router.use(attachOwnedBrands);
 
 router.route('/').post(createService);
