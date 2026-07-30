@@ -54,6 +54,11 @@ const userSchema = new mongoose.Schema({
         ref: 'Company',
         default: null
     },
+    companyId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Company',
+        default: null
+    },
     banReason: String,
     banExpires: Date,
     banDuration: {

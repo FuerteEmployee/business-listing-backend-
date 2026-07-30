@@ -23,7 +23,7 @@ exports.protect = async (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
         
         // Find user and attach to request
-            console.log('Decoded Token:', decoded);
+        console.log('Decoded Token:', decoded);
         const user = await User.findById(decoded.id);
         if (!user) {
             return res.status(401).json({ msg: 'User no longer exists' });
@@ -34,8 +34,12 @@ exports.protect = async (req, res, next) => {
             return res.status(401).json({ msg: 'Session invalidated. Please login again.' });
         }
         
+        // Explicitly set companyId for multi-tenancy isolation
+        user.companyId = decoded.companyId || user.company || user.companyId;
+        user.company = user.companyId;
+        
         req.user = user;
-            console.log('User attached to request:', user);
+        console.log('User attached to request:', user);
         next();
     } catch (err) {
         return res.status(401).json({ msg: 'Not authorized to access this route' });
@@ -107,6 +111,36 @@ exports.checkPermission = (module, action) => {
             return res.status(500).json({ msg: 'Authorization system error' });
         }
     };
+};
+
+// Optional protect: Decodes JWT if present but doesn't block request if missing or invalid
+exports.optionalProtect = async (req, res, next) => {
+    let token;
+
+    if (
+        req.headers.authorization &&
+        req.headers.authorization.startsWith('Bearer')
+    ) {
+        token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+        return next();
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+        const user = await User.findById(decoded.id);
+        if (user) {
+            user.companyId = decoded.companyId || user.company || user.companyId;
+            user.company = user.companyId;
+            req.user = user;
+        }
+        next();
+    } catch (err) {
+        // Continue without user if token is invalid/expired in optional protect mode
+        next();
+    }
 };
 
 // Admin middleware - shorthand for authorize('Super Admin')

@@ -8,8 +8,8 @@ const { sendSMS, sendWhatsApp } = require('../utils/sms');
 const jwt = require('jsonwebtoken');
 
 // Helper to generate token (DRY: could be moved to a util)
-const generateToken = (id, role, name, email, tokenVersion = 0) => {
-    return jwt.sign({ id, role, name, email, tokenVersion }, process.env.JWT_SECRET || 'fallback_secret', {
+const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
+    return jwt.sign({ id, role, name, email, companyId, tokenVersion }, process.env.JWT_SECRET || 'fallback_secret', {
         expiresIn: '30d',
     });
 };
@@ -100,7 +100,7 @@ exports.verifyOTP = async (req, res) => {
         let response = { success: true, msg: 'OTP verified successfully' };
         
         if (user) {
-            const token = generateToken(user._id, user.role, user.name, user.email, user.tokenVersion);
+            const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
             response.token = token;
             response.user = {
                 _id: user._id,

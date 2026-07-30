@@ -4,8 +4,8 @@ const OTP = require('../models/OTP');
 const jwt = require('jsonwebtoken');
 const { sendSMS } = require('../utils/sms');
 
-const generateToken = (id, role, name, email, tokenVersion = 0) => {
-    return jwt.sign({ id, role, name, email, tokenVersion }, process.env.JWT_SECRET || 'fallback_secret', {
+const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
+    return jwt.sign({ id, role, name, email, companyId, tokenVersion }, process.env.JWT_SECRET || 'fallback_secret', {
         expiresIn: '30d',
     });
 };
@@ -191,7 +191,7 @@ exports.verifyProfileChange = async (req, res) => {
             await OTP.deleteOne({ _id: otpRecord._id });
         }
 
-        const token = generateToken(user._id, user.role, user.name, user.email, user.tokenVersion);
+        const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
         res.json({ success: true, msg: 'Profile updated successfully', user, token });
     } catch (err) {

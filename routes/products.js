@@ -10,16 +10,16 @@ const {
     reorderProducts
 } = require('../controllers/productController');
 
-const { protect, authorize, attachOwnedBrands } = require('../middleware/authMiddleware');
+const { protect, authorize, attachOwnedBrands, optionalProtect } = require('../middleware/authMiddleware');
 
 // Public routes
-router.route('/').get(getProducts);
+router.route('/').get(optionalProtect, getProducts);
 router.route('/slug/:slug').get(getProductBySlug);
-router.route('/:id').get(getProduct);
+router.route('/:id').get(optionalProtect, getProduct);
 
 // Protected routes (Admin / Brand Owner)
 router.use(protect);
-router.use(authorize('Super Admin', 'Brand Owner', 'Company Owner'));
+router.use(authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'));
 router.use(attachOwnedBrands);
 
 router.route('/').post(createProduct);

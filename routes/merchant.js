@@ -25,38 +25,38 @@ router.use(protect);
 router.use(attachOwnedBrands);
 
 // ==================== DASHBOARD ====================
-router.get('/dashboard', authorize('Brand Owner', 'Company Owner'), getMerchantDashboard);
+router.get('/dashboard', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantDashboard);
 
 // ==================== PRODUCTS ====================
 router.route('/products')
-    .get(authorize('Brand Owner', 'Company Owner'), getMerchantProducts)
-    .post(authorize('Brand Owner', 'Company Owner'), createMerchantProduct);
+    .get(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantProducts)
+    .post(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), createMerchantProduct);
 
 router.route('/products/:productId')
-    .put(authorize('Brand Owner', 'Company Owner'), updateMerchantProduct)
-    .delete(authorize('Brand Owner', 'Company Owner'), deleteMerchantProduct);
+    .put(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateMerchantProduct)
+    .delete(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), deleteMerchantProduct);
 
-router.post('/products/:productId/submit', authorize('Brand Owner', 'Company Owner'), submitProductForApproval);
+router.post('/products/:productId/submit', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), submitProductForApproval);
 
 // ==================== SERVICES ====================
 router.route('/services')
-    .get(authorize('Brand Owner', 'Company Owner'), getMerchantServices)
-    .post(authorize('Brand Owner', 'Company Owner'), createMerchantService);
+    .get(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantServices)
+    .post(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), createMerchantService);
 
 router.route('/services/:serviceId')
-    .put(authorize('Brand Owner', 'Company Owner'), updateMerchantService);
+    .put(authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateMerchantService);
 
 // ==================== ORDERS ====================
-router.get('/orders', authorize('Brand Owner', 'Company Owner'), getMerchantOrders);
-router.get('/orders/:orderId', authorize('Brand Owner', 'Company Owner'), getMerchantOrderDetails);
-router.put('/orders/:orderId/status', authorize('Brand Owner', 'Company Owner'), updateOrderStatus);
+router.get('/orders', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantOrders);
+router.get('/orders/:orderId', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantOrderDetails);
+router.put('/orders/:orderId/status', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateOrderStatus);
 
 // ==================== INVENTORY ====================
-router.get('/inventory/alerts', authorize('Brand Owner', 'Company Owner'), getLowStockAlerts);
-router.put('/inventory/products/:productId/stock', authorize('Brand Owner', 'Company Owner'), updateProductStock);
+router.get('/inventory/alerts', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getLowStockAlerts);
+router.put('/inventory/products/:productId/stock', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), updateProductStock);
 
 // ==================== ANALYTICS ====================
-router.get('/analytics', authorize('Brand Owner', 'Company Owner'), getMerchantAnalytics);
+router.get('/analytics', authorize('Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'), getMerchantAnalytics);
 
 // ==================== ADMIN ROUTES ====================
 // Admin can access any merchant's data

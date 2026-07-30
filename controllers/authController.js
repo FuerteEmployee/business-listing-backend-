@@ -6,8 +6,8 @@ const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-const generateToken = (id, role, name, email, tokenVersion = 0) => {
-    return jwt.sign({ id, role, name, email, tokenVersion }, process.env.JWT_SECRET || 'fallback_secret', {
+const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
+    return jwt.sign({ id, role, name, email, companyId, tokenVersion }, process.env.JWT_SECRET || 'fallback_secret', {
         expiresIn: '30d',
     });
 };
@@ -40,10 +40,46 @@ exports.register = async (req, res) => {
             verificationToken
         });
 
+        // Auto-create company for merchants/owners
+        const isMerchant = ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(user.role);
+        if (isMerchant) {
+            const CategoryModel = require('../models/Category');
+            const CompanyModel = require('../models/Company');
+            const slugify = require('slugify');
+
+            const defaultCategory = await CategoryModel.findOne({ status: 'Active' });
+            const categoryName = defaultCategory ? defaultCategory.name : 'Services';
+            const categoryId = defaultCategory ? defaultCategory._id : null;
+
+            const companyName = `${name}'s Business`;
+            let companySlug = slugify(companyName, { lower: true, strict: true });
+
+            let slugExists = await CompanyModel.findOne({ slug: companySlug });
+            if (slugExists) {
+                companySlug = `${companySlug}-${Math.floor(Math.random() * 1000)}`;
+            }
+
+            const userCompany = await CompanyModel.create({
+                name: companyName,
+                slug: companySlug,
+                category: categoryName,
+                category_id: categoryId,
+                owner: user._id,
+                claimed: true,
+                verified: true
+            });
+
+            // Update user with company references
+            user.company = userCompany._id;
+            user.companyId = userCompany._id;
+            user.companiesOwned = 1;
+            await user.save();
+        }
+
         // In a real app, send email here using nodemailer
         console.log(`Email verification link: http://localhost:5173/verify-email/${verificationToken}`);
 
-        const token = generateToken(user._id, user.role, user.name, user.email, user.tokenVersion);
+        const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
         res.status(201).json({
             success: true,
@@ -107,7 +143,7 @@ exports.login = async (req, res) => {
 
         await user.save();
 
-        const token = generateToken(user._id, user.role, user.name, user.email, user.tokenVersion);
+        const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
         res.json({
             success: true,
@@ -385,7 +421,7 @@ exports.googleLogin = async (req, res) => {
             await user.save();
         }
 
-        const token = generateToken(user._id, user.role, user.name, user.email, user.tokenVersion);
+        const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
         res.json({
             success: true,
@@ -466,7 +502,7 @@ exports.facebookLogin = async (req, res) => {
             });
         }
 
-        const token = generateToken(user._id, user.role, user.name, user.email, user.tokenVersion);
+        const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
         res.json({
             success: true,

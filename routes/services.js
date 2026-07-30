@@ -17,7 +17,7 @@ router.route('/:id').get(getService);
 
 // Protected routes (Admin / Brand Owner)
 router.use(protect);
-router.use(authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant'));
+router.use(authorize('Super Admin', 'Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'));
 router.use(attachOwnedBrands);
 
 router.route('/').post(createService);

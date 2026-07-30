@@ -16,6 +16,7 @@ const productSchema = new mongoose.Schema({
     
     // Core Architecture Tie-in
     listingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
+    companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', default: null },
     
     categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
     subCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },

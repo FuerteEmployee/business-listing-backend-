@@ -333,6 +333,25 @@ const updateCompany = async (req, res) => {
             delete body.owner;
         }
 
+        // Handle bidirectional owner assignment
+        if (body.owner !== undefined && String(body.owner) !== String(company.owner)) {
+            // Remove company link from previous owner
+            if (company.owner) {
+                await User.findByIdAndUpdate(company.owner, {
+                    company: null,
+                    companyId: null
+                });
+            }
+            // Add company link to new owner
+            if (body.owner) {
+                await User.findByIdAndUpdate(body.owner, {
+                    company: company._id,
+                    companyId: company._id,
+                    companiesOwned: 1
+                });
+            }
+        }
+
         // Audit Trail Logic
         const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'tagline', 'serviceRadius', 'logo', 'images', 'videos'];
         const changes = [];
