@@ -76,16 +76,13 @@ exports.getProduct = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Product not found' });
         }
 
-        // Multi-tenancy isolation: block access for tenants if the product belongs to another company
-        if (req.user && req.user.role !== 'Super Admin') {
-            const productCompanyId = product.companyId ? product.companyId.toString() : (product.listingId ? product.listingId.toString() : null);
-            const userCompanyId = req.user.companyId ? req.user.companyId.toString() : (req.user.company ? req.user.company.toString() : null);
-            
-            // Only enforce this on Brand / Company Owners (tenants)
-            if (req.user.role === 'Brand Owner' || req.user.role === 'Company Owner') {
-                if (productCompanyId !== userCompanyId) {
-                    return res.status(403).json({ success: false, error: 'Access Denied: You do not own this product' });
-                }
+        // Multi-tenancy isolation: block access for tenants if the product belongs to another company.
+        // Mirrors the scoping used in updateProduct/deleteProduct rather than a hand-rolled role
+        // check, so it also covers 'Merchant' and the lowercase owner/Owner/OWNER role spellings.
+        if (isBrandScoped(req.user)) {
+            const listingId = product.listingId?._id || product.listingId;
+            if (!ownsBrand(req, listingId)) {
+                return res.status(403).json({ success: false, error: 'Access Denied: You do not own this product' });
             }
         }
 

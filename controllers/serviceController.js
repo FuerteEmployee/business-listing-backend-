@@ -74,6 +74,15 @@ exports.getService = async (req, res) => {
         if (!service) {
             return res.status(404).json({ success: false, error: 'Service not found' });
         }
+
+        // Multi-tenancy isolation: block access for tenants if the service belongs to another company.
+        if (isBrandScoped(req.user)) {
+            const listingId = service.listingId?._id || service.listingId;
+            if (!ownsBrand(req, listingId)) {
+                return res.status(403).json({ success: false, error: 'Access Denied: You do not own this service' });
+            }
+        }
+
         res.status(200).json({ success: true, data: service });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
