@@ -39,7 +39,11 @@ const {
     updateListingAdmin,
     updateListingRank,
     bulkReorderListings,
-    importListings
+    importListings,
+    getPendingPhotoGroups,
+    getPendingPhotos,
+    updatePhotoStatus,
+    bulkPhotoAction
 } = require('../controllers/adminListingController');
 const {
     getAllReviewsAdmin,
@@ -117,6 +121,12 @@ router.get('/listings/export/csv', checkPermission('reporting', 'export'), expor
 router.get('/listings/:id/audit', checkPermission('listingManagement', 'read'), getListingAuditTrail);
 router.put('/listings/:id/rank', checkPermission('listingManagement', 'write'), updateListingRank);
 router.post('/listings/reorder', checkPermission('listingManagement', 'write'), bulkReorderListings);
+
+// ==================== PHOTO MODERATION ====================
+router.get('/photos/pending-groups', checkPermission('listingManagement', 'approve'), getPendingPhotoGroups);
+router.get('/photos/pending', checkPermission('listingManagement', 'approve'), getPendingPhotos);
+router.put('/listings/:id/photos/:photoId', checkPermission('listingManagement', 'approve'), updatePhotoStatus);
+router.post('/photos/bulk-action', checkPermission('listingManagement', 'approve'), bulkPhotoAction);
 
 // ==================== SPREADSHEET IMPORT ====================
 // Combined categories + users + listings import from one workbook.

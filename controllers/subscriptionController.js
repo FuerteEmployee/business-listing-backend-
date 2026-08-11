@@ -18,16 +18,16 @@ const razorpay = new Razorpay({
 // @access  Private
 exports.getBusinessSubscription = async (req, res) => {
     try {
-        const subscription = await Subscription.findOne({ 
+        const subscription = await Subscription.findOne({
             businessId: req.params.businessId,
             status: { $in: ['active', 'grace_period'] }
         }).populate('planId');
-        
-        if (!subscription) {
-            return res.status(404).json({ msg: 'No active subscription found for this business' });
-        }
-        
-        res.json(subscription);
+
+        // Having no active subscription is a normal state for a free-tier business, not
+        // an error - a 404 here just made the browser log a failed request on every page
+        // load for every unsubscribed business. 200 + null lets callers branch on the
+        // value instead of the HTTP status.
+        res.json({ subscription: subscription || null });
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server Error');

@@ -8,8 +8,15 @@ const City = require('../models/City');
 const Area = require('../models/Area');
 const slugify = require('slugify');
 const { isBrandScoped } = require('../middleware/authMiddleware');
+const { resolveManualLocation } = require('../utils/resolveManualLocation');
 
-
+// Helper to create a basic fuzzy regex (e.g. "pilo" -> "p.*i.*l.*o")
+const createFuzzyRegex = (str) => {
+    if (!str) return '';
+    // Escape special regex characters first to prevent regex injection
+    const escaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return escaped.split('').join('.*');
+};
 
 // @desc    Get all companies
 // @route   GET /api/companies
@@ -50,12 +57,15 @@ const getAllCompanies = async (req, res) => {
         if (priceRange) matchQuery.priceRange = priceRange;
         if (rating) matchQuery.rating = { $gte: parseFloat(rating) };
 
-        // 2. Search Query (Text search)
+        // 2. Search Query (Text search with fuzzy matching)
         if (q) {
+            const fuzzyPattern = createFuzzyRegex(q);
+            const regexQuery = { $regex: fuzzyPattern, $options: 'i' };
+            
             matchQuery.$or = [
-                { name: { $regex: q, $options: 'i' } },
-                { description: { $regex: q, $options: 'i' } },
-                { tags: { $in: [new RegExp(q, 'i')] } }
+                { name: regexQuery },
+                { description: regexQuery },
+                { tags: regexQuery } // assuming tags are strings
             ];
         }
 
@@ -127,11 +137,23 @@ const getAllCompanies = async (req, res) => {
             servicesByCompany[cid].push(s);
         });
 
-        companies = companies.map(company => ({
-            ...company,
-            products: productsByCompany[company._id.toString()] || [],
-            services: servicesByCompany[company._id.toString()] || []
-        }));
+        companies = companies.map(company => {
+            const rawImages = (company.images || []).filter(Boolean);
+            const approvedImages = rawImages.filter(img =>
+                typeof img === 'object' && img !== null ? (img.status === 'Approved' || !img.status) : true
+            );
+            const photoUrls = approvedImages.map(img => (typeof img === 'object' && img !== null ? img.url : img)).filter(Boolean);
+            const coverObj = approvedImages.find(img => typeof img === 'object' && img !== null && img.isCover) || approvedImages[0];
+            const coverUrl = company.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null);
+
+            return {
+                ...company,
+                image: coverUrl,
+                photos: photoUrls,
+                products: productsByCompany[company._id.toString()] || [],
+                services: servicesByCompany[company._id.toString()] || []
+            };
+        });
 
         res.json({
             data: companies,
@@ -153,9 +175,6 @@ const getAllCompanies = async (req, res) => {
 const createCompany = async (req, res) => {
     try {
         const body = { ...req.body };
-        ['country_id', 'state_id', 'city_id', 'area_id', 'category_id', 'owner', 'latitude', 'longitude', 'gstPan', 'subCategory', 'manualCountry', 'manualState', 'manualCity', 'manualArea'].forEach(field => {
-            if (body[field] === '' || body[field] === 'manual') body[field] = null;
-        });
 
         // Convert latitude/longitude to GeoJSON if provided
         if (body.latitude && body.longitude) {
@@ -165,81 +184,8 @@ const createCompany = async (req, res) => {
             };
         }
 
-        // Handle cascading manual location entry (Country -> State -> City -> Area)
-        try {
-            // 1. Country
-            if (!body.country_id && body.manualCountry) {
-                let country = await Country.findOne({ 
-                    $or: [
-                        { name: new RegExp(`^${body.manualCountry}$`, 'i') },
-                        { code: body.manualCountryCode?.toUpperCase() }
-                    ]
-                });
-                if (!country && body.manualCountryCode) {
-                    country = await Country.create({ 
-                        name: body.manualCountry, 
-                        code: body.manualCountryCode.toUpperCase(),
-                        status: 'Active'
-                    });
-                }
-                if (country) body.country_id = country._id;
-            }
-
-            // 2. State
-            if (body.country_id && !body.state_id && body.manualState) {
-                let state = await State.findOne({ 
-                    country_id: body.country_id, 
-                    name: new RegExp(`^${body.manualState}$`, 'i') 
-                });
-                if (!state) {
-                    state = await State.create({ 
-                        country_id: body.country_id, 
-                        name: body.manualState,
-                        status: 'Active'
-                    });
-                }
-                if (state) body.state_id = state._id;
-            }
-
-            // 3. City
-            if (body.state_id && !body.city_id && body.manualCity) {
-                let city = await City.findOne({ 
-                    state_id: body.state_id, 
-                    name: new RegExp(`^${body.manualCity}$`, 'i') 
-                });
-                if (!city) {
-                    const citySlug = slugify(body.manualCity, { lower: true, strict: true });
-                    city = await City.create({ 
-                        state_id: body.state_id, 
-                        name: body.manualCity,
-                        slug: citySlug,
-                        status: 'Active'
-                    });
-                }
-                if (city) body.city_id = city._id;
-            }
-
-            // 4. Area
-            if (body.city_id && !body.area_id && body.manualArea) {
-                let area = await Area.findOne({ 
-                    city_id: body.city_id, 
-                    name: new RegExp(`^${body.manualArea}$`, 'i') 
-                });
-                if (!area) {
-                    const areaSlug = slugify(body.manualArea, { lower: true, strict: true });
-                    area = await Area.create({
-                        city_id: body.city_id,
-                        name: body.manualArea,
-                        slug: areaSlug,
-                        status: 'Active'
-                    });
-                }
-                if (area) body.area_id = area._id;
-            }
-        } catch (locErr) {
-            console.error('Error handling cascading manual location:', locErr);
-        }
-
+        // Sanitise sentinel values and resolve manual location entries
+        await resolveManualLocation(body);
 
 
         // For logged-in users, assign them as owner and ensure they are at least a Brand Owner
@@ -416,12 +362,21 @@ const deleteCompany = async (req, res) => {
 // @route   GET /api/companies/slug/:slug
 const getCompanyBySlug = async (req, res) => {
     try {
-        const company = await Company.findOne({ slug: req.params.slug })
+        let company = await Company.findOne({ slug: req.params.slug })
             .populate('country_id', 'name slug')
             .populate('city_id', 'name slug')
             .populate('state_id', 'name slug')
             .populate('area_id', 'name slug')
             .populate('owner', 'name email role');
+
+        if (!company) {
+            company = await Company.findOne({ slug: new RegExp(`^${req.params.slug}$`, 'i') })
+                .populate('country_id', 'name slug')
+                .populate('city_id', 'name slug')
+                .populate('state_id', 'name slug')
+                .populate('area_id', 'name slug')
+                .populate('owner', 'name email role');
+        }
 
         if (!company) {
             return res.status(404).json({ msg: 'Company not found' });
@@ -445,6 +400,22 @@ const getCompanyBySlug = async (req, res) => {
         const companyObj = company.toObject();
         companyObj.products = products;
         companyObj.services = services;
+
+        // Filter approved photos and populate photos array & cover image for frontend
+        try {
+            const rawImages = (companyObj.images || []).filter(Boolean);
+            const approvedImages = rawImages.filter(img =>
+                typeof img === 'object' && img !== null ? (img.status === 'Approved' || !img.status) : true
+            );
+            const photoUrls = approvedImages.map(img => (typeof img === 'object' && img !== null ? img.url : img)).filter(Boolean);
+            const coverObj = approvedImages.find(img => typeof img === 'object' && img !== null && img.isCover) || approvedImages[0];
+            const coverUrl = companyObj.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null);
+
+            companyObj.photos = photoUrls;
+            companyObj.image = coverUrl;
+        } catch (imgErr) {
+            console.error('Error formatting company images:', imgErr);
+        }
 
         res.json(companyObj);
     } catch (err) {
@@ -498,7 +469,9 @@ const autocomplete = async (req, res) => {
         const { q } = req.query;
         if (!q || q.length < 2) return res.json([]);
 
-        const regex = new RegExp(q, 'i');
+        // Use fuzzy matching for better typo tolerance
+        const fuzzyPattern = createFuzzyRegex(q);
+        const regex = new RegExp(fuzzyPattern, 'i');
         
         // Parallel search for Categories and Companies
         const [categories, companyNames] = await Promise.all([

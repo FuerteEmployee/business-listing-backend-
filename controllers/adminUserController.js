@@ -20,7 +20,7 @@ const transporter = nodemailer.createTransport({
 // @access  Private/Super Admin
 exports.createAdminUser = async (req, res) => {
     try {
-        const { name, email, password, role, ipWhitelist } = req.body;
+        const { name, email, password, role, ipWhitelist, status } = req.body;
 
         // Check if user already exists
         let user = await User.findOne({ email });
@@ -52,7 +52,9 @@ exports.createAdminUser = async (req, res) => {
             email,
             password: hashedPassword,
             role,
-            status: 'Active',
+            // The provisioning form offers an Account Status; honour it instead of
+            // silently forcing every new operator to Active.
+            status: status || 'Active',
             isEmailVerified: true, // Internal admins are pre-verified
             ipWhitelist: ipArray,
             lastAdminAction: {
@@ -100,6 +102,22 @@ exports.updateAdminUser = async (req, res) => {
         let user = await User.findById(req.params.id);
         if (!user) {
             return res.status(404).json({ success: false, msg: 'Admin operator not found' });
+        }
+
+        // Changing a Super Admin's role/status, or promoting someone to Super Admin,
+        // is only allowed when the requester is themselves a Super Admin - otherwise
+        // any role holding adminManagement:write could grant itself full admin bypass.
+        const touchesSuperAdmin = user.role === 'Super Admin' || role === 'Super Admin';
+        if (touchesSuperAdmin && req.user.role !== 'Super Admin') {
+            return res.status(403).json({ success: false, msg: 'Only a Super Admin can modify a Super Admin account or grant the Super Admin role' });
+        }
+
+        if (role) {
+            const RBACRole = require('../models/RBACRole');
+            const roleExists = await RBACRole.findOne({ name: role });
+            if (!roleExists) {
+                return res.status(400).json({ success: false, msg: 'Invalid administrative role' });
+            }
         }
 
         // Capture old state for audit
@@ -178,7 +196,7 @@ exports.updateAdminUser = async (req, res) => {
 // @access  Private/Super Admin, Admin
 exports.createUser = async (req, res) => {
     try {
-        const { name, email, password, role, mobileNumber, status, isEmailVerified, performanceScore } = req.body;
+        const { name, email, password, role, mobileNumber, status, isEmailVerified, performanceScore, assignedBrand } = req.body;
 
         let user = await User.findOne({ email });
         if (user) {
@@ -212,6 +230,14 @@ exports.createUser = async (req, res) => {
             lastAdminAction: { action: 'Account Created', by: req.user._id, at: new Date() }
         });
 
+        // Assign Brand if applicable
+        if (role === 'Merchant' && assignedBrand) {
+            await Company.findByIdAndUpdate(assignedBrand, {
+                owner: user._id,
+                claimed: true
+            });
+        }
+
         await AdminAuditLog.create({
             adminId: req.user._id,
             action: 'USER_CREATED',
@@ -233,7 +259,7 @@ exports.createUser = async (req, res) => {
 // @access  Private/Super Admin, Admin
 exports.updateUser = async (req, res) => {
     try {
-        const { name, email, role, status, mobileNumber, isEmailVerified, performanceScore, password } = req.body;
+        const { name, email, role, status, mobileNumber, isEmailVerified, performanceScore, password, assignedBrand } = req.body;
 
         let user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ success: false, msg: 'User not found' });
@@ -265,10 +291,27 @@ exports.updateUser = async (req, res) => {
         if (isEmailVerified !== undefined) user.isEmailVerified = isEmailVerified;
         if (performanceScore !== undefined) user.performanceScore = performanceScore;
 
-        let passwordChanged = false;
-        if (password && password.trim() !== '') {
+        if (password) {
             const salt = await bcrypt.genSalt(10);
             user.password = await bcrypt.hash(password, salt);
+        }
+
+        // Handle Brand Assignment
+        if (role === 'Merchant' && assignedBrand) {
+            // Unassign previously owned companies if they change it? 
+            // For now, just assign the new one. (We can remove owner from previously owned if needed, but let's just assign).
+            await Company.updateMany({ owner: user._id }, { owner: null, claimed: false });
+            await Company.findByIdAndUpdate(assignedBrand, {
+                owner: user._id,
+                claimed: true
+            });
+        } else if (role !== 'Merchant') {
+            // If they are no longer a merchant, remove ownership
+            await Company.updateMany({ owner: user._id }, { owner: null, claimed: false });
+        }
+
+        let passwordChanged = false;
+        if (password && password.trim() !== '') {
             passwordChanged = true;
         }
 
@@ -367,7 +410,16 @@ exports.getAllUsersAdmin = async (req, res) => {
             .select('-password')
             .sort(sortObj)
             .skip(skip)
-            .limit(parseInt(limit));
+            .limit(parseInt(limit))
+            .lean();
+
+        // There is no `lastLogin` field on the schema - logins are appended to
+        // loginHistory[] - so derive it here rather than having each table dig through
+        // the array (or, as the admin table did, read a field that never existed).
+        users.forEach(user => {
+            const history = user.loginHistory || [];
+            user.lastLogin = history.length ? history[history.length - 1].timestamp : null;
+        });
 
         // Get total count for pagination
         const total = await User.countDocuments(query);
@@ -430,6 +482,11 @@ exports.getUserDetailAdmin = async (req, res) => {
             lastIp: lastLogin ? lastLogin.ip : null
         };
 
+        let ownedCompany = null;
+        if (user.role === 'Merchant' || user.role === 'Brand Owner' || user.role === 'Company Owner') {
+            ownedCompany = await Company.findOne({ owner: user._id }).select('_id name');
+        }
+
         // If user location is empty, try to provide a hint from last login
         if (!user.location && lastLogin && lastLogin.ip) {
             user.location = `Last login from IP: ${lastLogin.ip}`;
@@ -439,6 +496,7 @@ exports.getUserDetailAdmin = async (req, res) => {
             success: true,
             user,
             stats,
+            ownedCompany,
             activity: {
                 recentReviews: reviews,
                 recentEnquiries: enquiries,
@@ -711,6 +769,13 @@ exports.deleteOrAnonymizeUser = async (req, res) => {
             return res.status(404).json({ success: false, msg: 'User not found' });
         }
 
+        // This route is shared with standard-user deletion (gated on userManagement:delete),
+        // so a role without adminManagement permissions could otherwise reach it. Block any
+        // attempt to delete/anonymize a Super Admin unless the requester is one themselves.
+        if (user.role === 'Super Admin' && req.user.role !== 'Super Admin') {
+            return res.status(403).json({ success: false, msg: 'Only a Super Admin can remove a Super Admin account' });
+        }
+
         if (mode === 'anonymize') {
             // Anonymize user data
             user.name = `Anonymous User ${user._id.toString().slice(-6)}`;
@@ -942,18 +1007,22 @@ exports.exportUsersToCsv = async (req, res) => {
 
         const users = await User.find(query).select('-password');
 
+        // Null-safe helpers
+        const safe = (v) => (v == null ? '' : String(v));
+        const csvCell = (v) => `"${safe(v).replace(/"/g, '""')}"`;
+
         // Build CSV content
         const csv = [
             ['Name', 'Email', 'Phone', 'Role', 'Status', 'Join Date', 'Reviews', 'Enquiries'].join(','),
             ...users.map(u => [
-                `"${u.name.replace(/"/g, '""')}"`,
-                u.email,
-                u.mobileNumber || '',
-                u.role,
-                u.status,
-                u.createdAt.toISOString().split('T')[0],
-                u.reviewCount || 0,
-                u.enquiryCount || 0
+                csvCell(u.name),
+                csvCell(u.email),
+                csvCell(u.mobileNumber),
+                csvCell(u.role),
+                csvCell(u.status),
+                csvCell(u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : ''),
+                csvCell(u.reviewCount || 0),
+                csvCell(u.enquiryCount || 0)
             ].join(','))
         ].join('\n');
 

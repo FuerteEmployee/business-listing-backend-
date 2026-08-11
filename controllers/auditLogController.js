@@ -235,19 +235,23 @@ exports.exportAuditLogsCsv = async (req, res) => {
             .populate('adminId', 'name email')
             .sort({ createdAt: -1 });
 
+        // Null-safe helpers
+        const safe = (v) => (v == null ? '' : String(v));
+        const csvCell = (v) => `"${safe(v).replace(/"/g, '""')}"`;
+
         // Build CSV
         const csv = [
             ['Timestamp', 'Admin Name', 'Admin Email', 'Action', 'Target Type', 'Target ID', 'Status', 'IP Address', 'Notes'].join(','),
             ...logs.map(log => [
-                log.createdAt.toISOString(),
-                `"${(log.adminId?.name || 'Deleted User').replace(/"/g, '""')}"`,
-                log.adminId?.email || 'N/A',
-                log.action,
-                log.targetType,
-                log.targetId || 'N/A',
-                log.status || 'success',
-                log.ipAddress || 'N/A',
-                `"${(log.notes || '').replace(/"/g, '""')}"`
+                csvCell(log.createdAt ? log.createdAt.toISOString() : ''),
+                csvCell(log.adminId?.name || 'Deleted User'),
+                csvCell(log.adminId?.email || 'N/A'),
+                csvCell(log.action),
+                csvCell(log.targetType),
+                csvCell(log.targetId || 'N/A'),
+                csvCell(log.status || 'success'),
+                csvCell(log.ipAddress || 'N/A'),
+                csvCell(log.notes)
             ].join(','))
         ].join('\n');
 

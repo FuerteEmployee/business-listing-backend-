@@ -13,7 +13,8 @@ const RBACRole = require('../models/RBACRole');
 const { isBrandScoped } = require('../middleware/authMiddleware');
 
 const KPI_WINDOW_DAYS = 30;
-const TIMELINE_DAYS = 7;
+const TIMELINE_RANGES = { '7D': 7, '30D': 30, '90D': 90 };
+const DEFAULT_TIMELINE_DAYS = 7;
 
 const getStartOfUtcDay = (daysAgo = 0) => {
     const date = new Date();
@@ -26,9 +27,12 @@ const getUtcDateKey = (date) => {
     return date.toISOString().slice(0, 10);
 };
 
+// Returns null when the previous window has no data to compare against: growth from a
+// zero baseline is undefined, and reporting it as "+100%" reads as a real trend.
+// The frontend renders null as "N/A".
 const getPercentChange = (currentValue, previousValue) => {
     if (!previousValue) {
-        return currentValue > 0 ? 100 : 0;
+        return null;
     }
 
     return Number((((currentValue - previousValue) / previousValue) * 100).toFixed(1));
@@ -78,9 +82,10 @@ const getDashboardStats = async (req, res) => {
         const adminRoleNames = roles.map(r => r.name);
         
         const adminQuery = { role: { $in: adminRoleNames } };
+        const timelineDays = TIMELINE_RANGES[req.query.range] || DEFAULT_TIMELINE_DAYS;
         const currentWindowStart = getStartOfUtcDay(KPI_WINDOW_DAYS - 1);
         const previousWindowStart = getStartOfUtcDay((KPI_WINDOW_DAYS * 2) - 1);
-        const timelineStart = getStartOfUtcDay(TIMELINE_DAYS - 1);
+        const timelineStart = getStartOfUtcDay(timelineDays - 1);
 
         const currentWindowFilter = { createdAt: { $gte: currentWindowStart } };
         const previousWindowFilter = {
@@ -130,6 +135,7 @@ const getDashboardStats = async (req, res) => {
             currentRevenue,
             previousRevenue,
             leadsToday,
+            leadsYesterday,
             listingsStatus,
             pendingModerationListings,
             topCities,
@@ -155,12 +161,31 @@ const getDashboardStats = async (req, res) => {
                 { $group: { _id: "$status", count: { $sum: 1 } } }
             ]) : Promise.resolve([]),
 
-            // Top Categories by Listing Count
+            // Top Categories by Listing Count.
+            // Grouped on the category_id ref and resolved through the categories collection,
+            // mirroring topCities below. The legacy free-text `category` string this used to
+            // group on is unvalidated, so bad imports (company names written into it) surfaced
+            // as fake "sectors" in the chart.
             Company.aggregate([
-                { $match: companyQuery },
-                { $group: { _id: "$category", count: { $sum: 1 } } },
+                { $match: { ...companyQuery, category_id: { $ne: null } } },
+                { $group: { _id: "$category_id", count: { $sum: 1 } } },
                 { $sort: { count: -1 } },
-                { $limit: 5 }
+                { $limit: 5 },
+                {
+                    $lookup: {
+                        from: 'categories',
+                        localField: '_id',
+                        foreignField: '_id',
+                        as: 'categoryInfo'
+                    }
+                },
+                { $unwind: '$categoryInfo' },
+                {
+                    $project: {
+                        _id: '$categoryInfo.name',
+                        count: 1
+                    }
+                }
             ]),
 
             // Recent Activity (derived from multiple collections) - Increased to 20
@@ -219,9 +244,15 @@ const getDashboardStats = async (req, res) => {
             ]).then(res => res[0]?.total || 0),
 
             // Leads Today
-            Lead.countDocuments({ 
-                ...leadQuery, 
-                createdAt: { $gte: getStartOfUtcDay(0) } 
+            Lead.countDocuments({
+                ...leadQuery,
+                createdAt: { $gte: getStartOfUtcDay(0) }
+            }),
+
+            // Leads Yesterday - baseline for the Leads Today trend badge
+            Lead.countDocuments({
+                ...leadQuery,
+                createdAt: { $gte: getStartOfUtcDay(1), $lt: getStartOfUtcDay(0) }
             }),
 
             // Active vs Inactive Listings
@@ -298,13 +329,16 @@ const getDashboardStats = async (req, res) => {
                 : 0
         };
 
-        const timeline = Array.from({ length: TIMELINE_DAYS }, (_, index) => {
-            const date = getStartOfUtcDay(TIMELINE_DAYS - 1 - index);
+        const timeline = Array.from({ length: timelineDays }, (_, index) => {
+            const date = getStartOfUtcDay(timelineDays - 1 - index);
             const isoDate = getUtcDateKey(date);
 
             return {
                 date: isoDate,
-                label: date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
+                // Weekday names repeat past a week, so longer ranges get a dated label instead.
+                label: timelineDays <= 7
+                    ? date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
+                    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
                 listings: companiesTimeline[isoDate] || 0,
                 users: usersTimeline[isoDate] || 0,
                 leads: leadsTimeline[isoDate] || 0,
@@ -347,6 +381,7 @@ const getDashboardStats = async (req, res) => {
                 totalCompanies: getPercentChange(currentCompanies, previousCompanies),
                 totalUsers: isBrandOwner ? null : getPercentChange(currentUsers, previousUsers),
                 totalLeads: getPercentChange(currentLeads, previousLeads),
+                leadsToday: getPercentChange(leadsToday, leadsYesterday),
                 pendingClaims: getPercentChange(currentPendingClaims, previousPendingClaims),
                 totalRevenue: getPercentChange(currentRevenue, previousRevenue)
             },

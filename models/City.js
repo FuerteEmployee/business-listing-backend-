@@ -14,7 +14,6 @@ const citySchema = new mongoose.Schema({
     slug: {
         type: String,
         required: true,
-        unique: true,
         trim: true,
         lowercase: true
     },
@@ -51,5 +50,8 @@ const citySchema = new mongoose.Schema({
 
 // Prevent duplicate cities within the same state
 citySchema.index({ state_id: 1, name: 1 }, { unique: true });
+// Slugs are scoped to the state, not global: the same city name legitimately recurs
+// across states, and no lookup resolves a city by slug alone.
+citySchema.index({ state_id: 1, slug: 1 }, { unique: true });
 
 module.exports = mongoose.model('City', citySchema);

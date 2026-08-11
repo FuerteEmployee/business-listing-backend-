@@ -5,6 +5,7 @@ const Order = require('../models/Order');
 const Company = require('../models/Company');
 const User = require('../models/User');
 const Category = require('../models/Category');
+const Lead = require('../models/Lead');
 
 // ==================== DASHBOARD OVERVIEW ====================
 
@@ -856,8 +857,38 @@ const getMerchantAnalytics = async (req, res) => {
     }
 };
 
+// ==================== LEADS ====================
+
+// Get leads for the brand owner's own listing(s). Brand-scoped by `Lead.business`,
+// mirroring the isBrandScoped pattern used elsewhere in this codebase (e.g.
+// dashboardController's leadQuery) - the admin-only GET /api/leads has no such scoping,
+// which is why brand-owner pages were hitting it and getting a 403.
+const getMerchantLeads = async (req, res) => {
+    try {
+        const ownedIds = (req.ownedBrandIds || []).map(id => id.toString());
+        if (ownedIds.length === 0) {
+            return res.json({ success: true, leads: [] });
+        }
+
+        const { status } = req.query;
+        const query = { business: { $in: ownedIds } };
+        if (status) query.status = status;
+
+        const leads = await Lead.find(query)
+            .sort({ createdAt: -1 })
+            .populate('business', 'name slug')
+            .populate('assignedTo', 'name email');
+
+        res.json({ success: true, leads });
+    } catch (err) {
+        console.error('Error fetching merchant leads:', err);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
+    }
+};
+
 module.exports = {
     getMerchantDashboard,
+    getMerchantLeads,
     getMerchantProducts,
     createMerchantProduct,
     updateMerchantProduct,

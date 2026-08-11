@@ -13,6 +13,22 @@ const generateSlug = (name) => {
         .replace(/-+$/, '');            // Trim - from end of text
 };
 
+// Location deletes must walk the whole Country > State > City > Area chain by hand:
+// Mongoose has no cascade, so deleting only the immediate children leaves the deeper
+// levels pointing at ids that no longer exist, and orphaned areas stay assignable to listings.
+const cascadeDeleteCities = async (cityIds) => {
+    if (!cityIds.length) return;
+    await Area.deleteMany({ city_id: { $in: cityIds } });
+    await City.deleteMany({ _id: { $in: cityIds } });
+};
+
+const cascadeDeleteStates = async (stateIds) => {
+    if (!stateIds.length) return;
+    const cities = await City.find({ state_id: { $in: stateIds } }).select('_id');
+    await cascadeDeleteCities(cities.map(c => c._id));
+    await State.deleteMany({ _id: { $in: stateIds } });
+};
+
 // ==========================================
 // PUBLIC APIs (Dropdowns & Search)
 // ==========================================
@@ -104,10 +120,13 @@ exports.updateCountry = async (req, res) => {
 
 exports.deleteCountry = async (req, res) => {
     try {
-        const country = await Country.findByIdAndDelete(req.params.id);
+        const country = await Country.findById(req.params.id);
         if (!country) return res.status(404).json({ success: false, msg: 'Country not found' });
-        // Cascade delete conceptually (in a real app, delete states, cities, etc.)
-        await State.deleteMany({ country_id: req.params.id });
+
+        const states = await State.find({ country_id: req.params.id }).select('_id');
+        await cascadeDeleteStates(states.map(s => s._id));
+        await Country.findByIdAndDelete(req.params.id);
+
         res.status(200).json({ success: true, data: {} });
     } catch (err) { res.status(500).json({ success: false, msg: 'Server Error' }); }
 };
@@ -141,9 +160,11 @@ exports.updateState = async (req, res) => {
 
 exports.deleteState = async (req, res) => {
     try {
-        const state = await State.findByIdAndDelete(req.params.id);
+        const state = await State.findById(req.params.id);
         if (!state) return res.status(404).json({ success: false, msg: 'State not found' });
-        await City.deleteMany({ state_id: req.params.id });
+
+        await cascadeDeleteStates([state._id]);
+
         res.status(200).json({ success: true, data: {} });
     } catch (err) { res.status(500).json({ success: false, msg: 'Server Error' }); }
 };

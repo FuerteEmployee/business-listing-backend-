@@ -3,6 +3,7 @@ const AdminAuditLog = require('../models/AdminAuditLog');
 const User = require('../models/User');
 const Review = require('../models/Review');
 const mongoose = require('mongoose');
+const { resolveManualLocation } = require('../utils/resolveManualLocation');
 const nodemailer = require('nodemailer');
 
 // Configure nodemailer
@@ -680,7 +681,7 @@ exports.exportListingsCsv = async (req, res) => {
             l.plan?.name || 'Free',
             l.status,
             l.verified ? 'Yes' : 'No',
-            new Date(l.createdAt).toLocaleDateString()
+            l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ''
         ]);
 
         const csvContent = [
@@ -725,16 +726,21 @@ exports.getListingAuditTrail = async (req, res) => {
 // @route   POST /api/admin/listings
 exports.createListingAdmin = async (req, res) => {
     try {
-        const { name, owner, category, status = 'Active' } = req.body;
+        const payload = { ...req.body };
+        const { name, category, status = 'Active' } = payload;
 
         if (!name || !category) {
             return res.status(400).json({ msg: 'Please provide business name and category' });
         }
 
-        const sanitizedOwner = owner && owner !== 'null' ? owner : null;
+        // Sanitise sentinel values ('manual', 'null', etc.) and resolve
+        // any "Add Manually..." location entries to real DB records.
+        await resolveManualLocation(payload);
+
+        const sanitizedOwner = payload.owner && payload.owner !== 'null' ? payload.owner : null;
 
         const newListing = new Company({
-            ...req.body,
+            ...payload,
             status: status || 'Active',
             approvalStatus: {
                 stage: 'Approved',
@@ -761,6 +767,15 @@ exports.createListingAdmin = async (req, res) => {
         res.status(201).json(newListing);
     } catch (err) {
         console.error('Create Listing Admin Error:', err);
+        if (err.name === 'ValidationError') {
+            const fieldErrors = Object.entries(err.errors || {}).map(
+                ([field, e]) => `${field}: ${e.message}`
+            );
+            return res.status(400).json({
+                msg: 'Validation failed',
+                errors: fieldErrors
+            });
+        }
         if (err.code === 11000) {
             return res.status(409).json({ msg: 'Listing already exists with the same slug or unique field' });
         }
@@ -796,7 +811,7 @@ exports.updateListingAdmin = async (req, res) => {
             if (updateFields[key] !== undefined) {
                 // Convert empty strings to null for ObjectId fields
                 if (objectIdFields.includes(key)) {
-                    if (!updateFields[key] || updateFields[key] === '' || updateFields[key] === 'null') {
+                    if (!updateFields[key] || updateFields[key] === '' || updateFields[key] === 'null' || updateFields[key] === 'manual' || updateFields[key] === 'undefined') {
                         listing[key] = null;
                     } else if (mongoose.Types.ObjectId.isValid(updateFields[key])) {
                         listing[key] = updateFields[key];
@@ -1063,3 +1078,267 @@ exports.importListings = async (req, res) => {
     }
 };
 
+// ==================== PHOTO MODERATION ====================
+
+// @desc    Get pending photos across all listings (moderation queue)
+// @route   GET /api/admin/photos/pending
+// @desc    Get groups of companies with pending photos
+// @route   GET /api/admin/photos/pending-groups
+exports.getPendingPhotoGroups = async (req, res) => {
+    try {
+        const pipeline = [
+            { $match: { 'images.status': 'Pending' } },
+            { $unwind: '$images' },
+            { $match: { 'images.status': 'Pending' } },
+            { 
+                $group: {
+                    _id: '$_id',
+                    name: { $first: '$name' },
+                    slug: { $first: '$slug' },
+                    pendingCount: { $sum: 1 }
+                }
+            },
+            { $sort: { pendingCount: -1 } }
+        ];
+        
+        const groups = await Company.aggregate(pipeline);
+        
+        res.json({
+            success: true,
+            data: groups,
+            totalGroups: groups.length
+        });
+    } catch (err) {
+        console.error('Get Pending Photo Groups Error:', err);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
+    }
+};
+
+// @desc    Get pending photos across all listings or for a specific listing
+// @route   GET /api/admin/photos/pending
+exports.getPendingPhotos = async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 24;
+        const skip = (page - 1) * limit;
+        const listingId = req.query.listingId;
+
+        const matchStage = listingId 
+            ? { 'images.status': 'Pending', _id: new mongoose.Types.ObjectId(listingId) }
+            : { 'images.status': 'Pending' };
+
+        // Count total pending photos
+        const countPipeline = [
+            { $match: matchStage },
+            { $unwind: '$images' },
+            { $match: { 'images.status': 'Pending' } },
+            { $count: 'total' }
+        ];
+        const countResult = await Company.aggregate(countPipeline);
+        const total = countResult[0]?.total || 0;
+
+        // Fetch pending photos with pagination
+        const photos = await Company.aggregate([
+            { $match: matchStage },
+            { $unwind: '$images' },
+            { $match: { 'images.status': 'Pending' } },
+            { $sort: { 'images._id': -1 } },
+            { $skip: skip },
+            { $limit: limit },
+            {
+                $project: {
+                    listingId: '$_id',
+                    listingName: '$name',
+                    listingSlug: '$slug',
+                    photoId: '$images._id',
+                    url: '$images.url',
+                    order: '$images.order',
+                    status: '$images.status'
+                }
+            }
+        ]);
+
+        res.json({
+            success: true,
+            data: photos,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            }
+        });
+    } catch (err) {
+        console.error('Get Pending Photos Error:', err);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
+    }
+};
+
+// @desc    Update photo status (approve/reject)
+// @route   PUT /api/admin/listings/:id/photos/:photoId
+exports.updatePhotoStatus = async (req, res) => {
+    try {
+        const { id, photoId } = req.params;
+        const { status } = req.body;
+
+        const VALID_STATUSES = ['Approved', 'Rejected'];
+        if (!status || !VALID_STATUSES.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                msg: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`
+            });
+        }
+
+        const listing = await Company.findById(id);
+        if (!listing) {
+            return res.status(404).json({ success: false, msg: 'Listing not found' });
+        }
+
+        const photo = listing.images.id(photoId);
+        if (!photo) {
+            return res.status(404).json({ success: false, msg: 'Photo not found in this listing' });
+        }
+
+        const oldStatus = photo.status;
+        photo.status = status;
+
+        // Cover-photo logic
+        if (status === 'Approved') {
+            // If no approved cover exists yet, make this the cover
+            const hasApprovedCover = listing.images.some(
+                img => img.isCover && img.status === 'Approved' && img._id.toString() !== photoId
+            );
+            if (!hasApprovedCover) {
+                // Clear any existing cover flags first
+                listing.images.forEach(img => { img.isCover = false; });
+                photo.isCover = true;
+            }
+        } else if (status === 'Rejected' && photo.isCover) {
+            // Rejecting the cover — promote the next approved photo by order
+            photo.isCover = false;
+            const nextCover = listing.images
+                .filter(img => img.status === 'Approved' && img._id.toString() !== photoId)
+                .sort((a, b) => (a.order || 0) - (b.order || 0))[0];
+            if (nextCover) nextCover.isCover = true;
+        }
+
+        await listing.save();
+
+        // Log audit
+        await AdminAuditLog.create({
+            adminId: req.user?._id,
+            action: status === 'Approved' ? 'PHOTO_APPROVED' : 'PHOTO_REJECTED',
+            targetType: 'Listing',
+            targetId: listing._id,
+            changes: {
+                before: { photoId, status: oldStatus },
+                after: { photoId, status, url: photo.url }
+            },
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent']
+        });
+
+        res.json({
+            success: true,
+            msg: `Photo ${status.toLowerCase()} successfully`,
+            photo: { _id: photo._id, url: photo.url, status: photo.status, isCover: photo.isCover }
+        });
+    } catch (err) {
+        console.error('Update Photo Status Error:', err);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
+    }
+};
+
+// @desc    Bulk approve/reject photos
+// @route   POST /api/admin/photos/bulk-action
+exports.bulkPhotoAction = async (req, res) => {
+    try {
+        const { items, action } = req.body;
+
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ success: false, msg: 'No photo items provided' });
+        }
+
+        const VALID_ACTIONS = ['approve', 'reject'];
+        if (!VALID_ACTIONS.includes(action)) {
+            return res.status(400).json({ success: false, msg: 'Invalid action. Must be "approve" or "reject"' });
+        }
+
+        const targetStatus = action === 'approve' ? 'Approved' : 'Rejected';
+        let successCount = 0;
+        let failedCount = 0;
+
+        // Group by listingId to minimise DB reads
+        const groupedByListing = {};
+        for (const item of items) {
+            if (!groupedByListing[item.listingId]) {
+                groupedByListing[item.listingId] = [];
+            }
+            groupedByListing[item.listingId].push(item.photoId);
+        }
+
+        for (const [listingId, photoIds] of Object.entries(groupedByListing)) {
+            try {
+                const listing = await Company.findById(listingId);
+                if (!listing) {
+                    failedCount += photoIds.length;
+                    continue;
+                }
+
+                for (const photoId of photoIds) {
+                    const photo = listing.images.id(photoId);
+                    if (!photo) {
+                        failedCount++;
+                        continue;
+                    }
+
+                    photo.status = targetStatus;
+
+                    // Cover-photo logic (same as single update)
+                    if (targetStatus === 'Approved') {
+                        const hasApprovedCover = listing.images.some(
+                            img => img.isCover && img.status === 'Approved' && img._id.toString() !== photoId
+                        );
+                        if (!hasApprovedCover) {
+                            listing.images.forEach(img => { img.isCover = false; });
+                            photo.isCover = true;
+                        }
+                    } else if (targetStatus === 'Rejected' && photo.isCover) {
+                        photo.isCover = false;
+                        const nextCover = listing.images
+                            .filter(img => img.status === 'Approved' && img._id.toString() !== photoId)
+                            .sort((a, b) => (a.order || 0) - (b.order || 0))[0];
+                        if (nextCover) nextCover.isCover = true;
+                    }
+
+                    successCount++;
+                }
+
+                await listing.save();
+            } catch (listingErr) {
+                console.error(`Bulk photo action error for listing ${listingId}:`, listingErr);
+                failedCount += photoIds.length;
+            }
+        }
+
+        // Log audit
+        await AdminAuditLog.create({
+            adminId: req.user?._id,
+            action: action === 'approve' ? 'PHOTO_BULK_APPROVED' : 'PHOTO_BULK_REJECTED',
+            targetType: 'Listing',
+            notes: `Bulk ${action}: ${successCount} succeeded, ${failedCount} failed`,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent']
+        });
+
+        res.json({
+            success: true,
+            msg: `Bulk ${action} completed: ${successCount} succeeded, ${failedCount} failed`,
+            successCount,
+            failedCount
+        });
+    } catch (err) {
+        console.error('Bulk Photo Action Error:', err);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
+    }
+};

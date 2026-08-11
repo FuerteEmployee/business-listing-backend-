@@ -1,5 +1,14 @@
 const Category = require('../models/Category');
+const Company = require('../models/Company');
 const { isBrandScoped, ownsBrand } = require('../middleware/authMiddleware');
+
+// Recompute a parent's subCount from the actual children instead of $inc-ing the cached
+// value. Any drift from direct DB writes (seed/migration scripts) self-heals on next touch.
+const syncSubCount = async (parentId) => {
+    if (!parentId) return;
+    const count = await Category.countDocuments({ parent: parentId });
+    await Category.findByIdAndUpdate(parentId, { $set: { subCount: count } });
+};
 
 // @desc    Get all categories
 // @route   GET /api/categories
@@ -11,17 +20,19 @@ const getAllCategories = async (req, res) => {
             query.parent = parentId === 'null' ? null : parentId;
         }
 
-        // Scoping for brand owners: global categories plus their own brand categories.
-        // Global ones must stay visible - their listing's own category is usually global.
+        const isPlatformAdmin = req.user
+            && ['Admin', 'Developer', 'Super Admin'].includes(req.user.role);
+
         if (isBrandScoped(req.user)) {
+            // Brand owners manage their own categories, so they must see them at any status -
+            // filtering those to Active would hide a category they just deactivated and leave
+            // no way to reactivate it. Global categories stay Active-only: they aren't theirs to manage.
             query.$or = [
-                { brandId: null },
+                { brandId: null, status: 'Active' },
                 { brandId: { $in: req.ownedBrandIds || [] } }
             ];
-        }
-
-        // 0. Enforce Active status for public requests
-        if (!req.user || (req.user.role !== 'Admin' && req.user.role !== 'Developer' && req.user.role !== 'Super Admin')) {
+        } else if (!isPlatformAdmin) {
+            // Public / regular logged-in users only ever see live categories.
             query.status = 'Active';
         }
 
@@ -67,10 +78,7 @@ const createCategory = async (req, res) => {
 
         await category.save();
 
-        // Increment subCount of parent if exists
-        if (parent) {
-            await Category.findByIdAndUpdate(parent, { $inc: { subCount: 1 } });
-        }
+        await syncSubCount(parent);
 
         res.status(201).json(category);
     } catch (err) {
@@ -93,6 +101,28 @@ const updateCategory = async (req, res) => {
         let category = await Category.findById(categoryId);
         if (!category) return res.status(404).json({ msg: 'Category not found' });
 
+        // Walk up from the proposed parent: if this category appears anywhere in that
+        // ancestor chain, the move would close a loop. Checking only `parent === categoryId`
+        // catches self-parenting but misses A -> B -> A and anything deeper, which would
+        // then infinite-loop breadcrumb/ancestor traversal.
+        if (parent) {
+            let ancestorId = parent;
+            const visited = new Set();
+            while (ancestorId) {
+                const key = ancestorId.toString();
+                if (key === categoryId.toString()) {
+                    return res.status(400).json({ msg: 'That parent is a descendant of this category - it would create a loop' });
+                }
+                // Guard against a pre-existing corrupt cycle so this walk always terminates.
+                if (visited.has(key)) break;
+                visited.add(key);
+
+                const ancestor = await Category.findById(ancestorId).select('parent').lean();
+                if (!ancestor) break;
+                ancestorId = ancestor.parent;
+            }
+        }
+
         // Brand owners may only touch their own brand categories, never global ones
         if (isBrandScoped(req.user) && !ownsBrand(req, category.brandId)) {
             return res.status(403).json({ msg: 'Not authorized to update this category' });
@@ -112,14 +142,10 @@ const updateCategory = async (req, res) => {
             { new: true }
         );
 
-        // Update subCounts if parent changed
+        // Resync both sides if the parent changed
         if (oldParent?.toString() !== parent?.toString()) {
-            if (oldParent) {
-                await Category.findByIdAndUpdate(oldParent, { $inc: { subCount: -1 } });
-            }
-            if (parent) {
-                await Category.findByIdAndUpdate(parent, { $inc: { subCount: 1 } });
-            }
+            await syncSubCount(oldParent);
+            await syncSubCount(parent);
         }
 
         res.json(category);
@@ -141,19 +167,31 @@ const deleteCategory = async (req, res) => {
         if (isBrandScoped(req.user) && !ownsBrand(req, category.brandId)) {
             return res.status(403).json({ msg: 'Not authorized to delete this category' });
         }
-        // Block deletion if subcategories exist
-        if (category.subCount > 0) {
-            return res.status(400).json({ msg: 'Cannot delete category with subcategories' });
+
+        // Count children live rather than trusting the cached `subCount`. That counter is
+        // maintained by hand across three handlers and drifts whenever a seed/migration
+        // script writes directly - a stale-high value blocks deleting a childless category,
+        // a stale-low one lets a category with real children through and orphans them.
+        const childCount = await Category.countDocuments({ parent: category._id });
+        if (childCount > 0) {
+            return res.status(400).json({ msg: `Cannot delete category with ${childCount} subcategor${childCount === 1 ? 'y' : 'ies'}` });
+        }
+
+        // Listings referencing this category would keep a dangling category_id, which
+        // populate() silently resolves to null - the listing shows a blank category with
+        // no sign anything was removed. Refuse instead, and say how many are affected.
+        const listingCount = await Company.countDocuments({ category_id: category._id });
+        if (listingCount > 0) {
+            return res.status(400).json({
+                msg: `Cannot delete: ${listingCount} listing${listingCount === 1 ? '' : 's'} still assigned to this category. Reassign them first.`
+            });
         }
 
         const parent = category.parent;
 
         await Category.findByIdAndDelete(req.params.id);
 
-        // Decrement subCount of parent if exists
-        if (parent) {
-            await Category.findByIdAndUpdate(parent, { $inc: { subCount: -1 } });
-        }
+        await syncSubCount(parent);
 
         res.json({ msg: 'Category removed' });
     } catch (err) {

@@ -23,7 +23,6 @@ exports.protect = async (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
 
         // Find user and attach to request
-        console.log('Decoded Token:', decoded);
         const user = await User.findById(decoded.id);
         if (!user) {
             return res.status(401).json({ msg: 'User no longer exists' });
@@ -39,7 +38,6 @@ exports.protect = async (req, res, next) => {
         user.company = user.companyId;
 
         req.user = user;
-        console.log('User attached to request:', user);
         next();
     } catch (err) {
         return res.status(401).json({ msg: 'Not authorized to access this route' });

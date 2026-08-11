@@ -73,10 +73,13 @@ exports.createRole = async (req, res) => {
         };
 
         if (baseRole) {
-            const base = await RBACRole.findOne({ name: baseRole });
-            if (base) {
-                basePermissions = base.permissions;
+            const base = await RBACRole.findOne({ name: baseRole }).lean();
+            if (!base) {
+                return res.status(400).json({ success: false, msg: `Cannot clone from '${baseRole}': role not found` });
             }
+            // .lean() keeps this a plain object - assigning another document's nested
+            // permissions path directly would carry Mongoose internals onto the new role.
+            basePermissions = base.permissions;
         }
 
         const role = new RBACRole({
@@ -104,12 +107,12 @@ exports.createRole = async (req, res) => {
     }
 };
 
-// @desc    Update role permissions
+// @desc    Update role name, description and/or permissions
 // @route   PUT /api/admin/roles/:id
-// @body    { permissions }
+// @body    { name, description, permissions }
 exports.updateRole = async (req, res) => {
     try {
-        const { permissions } = req.body;
+        const { name, description, permissions } = req.body;
 
         const role = await RBACRole.findById(req.params.id);
         if (!role) {
@@ -121,9 +124,27 @@ exports.updateRole = async (req, res) => {
             return res.status(403).json({ success: false, msg: 'Built-in roles cannot be modified' });
         }
 
+        // Renaming a role would strand every User carrying the old role string, since
+        // User.role stores the name rather than a ref - so migrate those users too.
+        const previousName = role.name;
+        const isRenaming = name && name !== previousName;
+        if (isRenaming) {
+            const clash = await RBACRole.findOne({ name, _id: { $ne: role._id } });
+            if (clash) {
+                return res.status(400).json({ success: false, msg: 'Another role with this name already exists' });
+            }
+            role.name = name;
+        }
+
+        if (typeof description !== 'undefined') role.description = description;
+
         const oldPermissions = role.permissions;
         role.permissions = permissions || role.permissions;
         await role.save();
+
+        if (isRenaming) {
+            await User.updateMany({ role: previousName }, { $set: { role: name } });
+        }
 
         // Log audit
         await AdminAuditLog.create({

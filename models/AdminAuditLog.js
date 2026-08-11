@@ -55,7 +55,11 @@ const adminAuditLogSchema = new mongoose.Schema({
             'SUBSCRIPTION_UPDATED',
             'COUPON_CREATED',
             'COUPON_UPDATED',
-            'COUPON_TOGGLED'
+            'COUPON_TOGGLED',
+            'PHOTO_APPROVED',
+            'PHOTO_REJECTED',
+            'PHOTO_BULK_APPROVED',
+            'PHOTO_BULK_REJECTED'
         ]
     },
     // What was affected

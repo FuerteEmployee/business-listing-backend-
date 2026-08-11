@@ -18,7 +18,6 @@ const areaSchema = new mongoose.Schema({
     slug: {
         type: String,
         required: true,
-        unique: true,
         trim: true,
         lowercase: true
     },
@@ -36,5 +35,8 @@ const areaSchema = new mongoose.Schema({
 
 // Prevent duplicate areas within the same city
 areaSchema.index({ city_id: 1, name: 1 }, { unique: true });
+// Slugs are scoped to the city, not global: names like "MG Road" or "Gandhi Nagar"
+// recur in nearly every city, and no lookup resolves an area by slug alone.
+areaSchema.index({ city_id: 1, slug: 1 }, { unique: true });
 
 module.exports = mongoose.model('Area', areaSchema);

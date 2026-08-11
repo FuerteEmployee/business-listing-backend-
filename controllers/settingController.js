@@ -144,14 +144,18 @@ exports.updateSettings = async (req, res) => {
             settings.markModified('homepage');
         }
         
-        // Update other top-level fields
-        if (req.body.siteName) settings.siteName = req.body.siteName;
-        if (req.body.logoUrl) settings.logoUrl = req.body.logoUrl;
-        if (req.body.faviconUrl) settings.faviconUrl = req.body.faviconUrl;
-        if (req.body.primaryColor) settings.primaryColor = req.body.primaryColor;
-        if (req.body.secondaryColor) settings.secondaryColor = req.body.secondaryColor;
-        if (req.body.contactEmail) settings.contactEmail = req.body.contactEmail;
-        if (req.body.contactPhone) settings.contactPhone = req.body.contactPhone;
+        // Update other top-level fields.
+        // Keyed on `!== undefined` rather than truthiness: an empty string is a deliberate
+        // "clear this field" instruction, and a truthy check silently discarded it, so the
+        // old value reappeared on the next refresh.
+        const TEXT_FIELDS = [
+            'siteName', 'logoUrl', 'faviconUrl',
+            'primaryColor', 'secondaryColor',
+            'contactEmail', 'contactPhone'
+        ];
+        TEXT_FIELDS.forEach(field => {
+            if (req.body[field] !== undefined) settings[field] = req.body[field];
+        });
         if (req.body.socialLinks) {
             settings.socialLinks = {
                 facebook: req.body.socialLinks.facebook || '',
@@ -163,7 +167,7 @@ exports.updateSettings = async (req, res) => {
             };
             settings.markModified('socialLinks');
         }
-        if (req.body.footerText) settings.footerText = req.body.footerText;
+        if (req.body.footerText !== undefined) settings.footerText = req.body.footerText;
         if (req.body.showFooter !== undefined) settings.showFooter = req.body.showFooter;
         if (req.body.rankingWeights) settings.rankingWeights = req.body.rankingWeights;
         if (req.body.hiddenFeatures) {
