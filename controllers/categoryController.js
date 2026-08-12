@@ -37,6 +37,23 @@ const getAllCategories = async (req, res) => {
         }
 
         const categories = await Category.find(query).sort({ createdAt: -1 });
+
+        // subCount (models/Category.js) is a global count of ALL children regardless of
+        // who can see them - accurate for an admin, but misleading for anyone else. A
+        // brand owner would see e.g. "2 sub-categories" on a shared global category, click
+        // in, and find nothing, because both children actually belong to two OTHER
+        // brands and the list query above correctly hides them. Recompute the number
+        // shown using the exact same visibility rule as that query, scoped per viewer.
+        if (!isPlatformAdmin) {
+            const scopeFilter = isBrandScoped(req.user)
+                ? { $or: [{ brandId: null, status: 'Active' }, { brandId: { $in: req.ownedBrandIds || [] } }] }
+                : { status: 'Active' };
+
+            await Promise.all(categories.map(async (cat) => {
+                cat.subCount = await Category.countDocuments({ parent: cat._id, ...scopeFilter });
+            }));
+        }
+
         res.json(categories);
     } catch (err) {
         console.error(err.message);

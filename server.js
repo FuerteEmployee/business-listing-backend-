@@ -77,6 +77,7 @@ app.use('/api/brand-locations', require('./routes/brandLocations'));
 app.use('/api/claims', require('./routes/claimRoutes'));
 app.use('/api/leads', require('./routes/leads'));
 app.use('/api/otp', require('./routes/otp'));
+app.use('/api/captcha', require('./routes/captcha'));
 app.use('/api/reviews', require('./routes/reviews'));
 app.use('/api/plans', require('./routes/plans'));
 app.use('/api/coupons', require('./routes/coupons'));

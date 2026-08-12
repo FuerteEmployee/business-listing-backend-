@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
+const { verifyAndConsumeCaptcha } = require('./captchaController');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
@@ -17,7 +18,17 @@ const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
 // @access  Public
 exports.register = async (req, res) => {
     try {
-        const { name, email, password, mobileNumber, role } = req.body;
+        const { name, email, password, mobileNumber, role, captchaId, captchaAnswer } = req.body;
+
+        // Anti-bot gate, checked BEFORE any account is created - this is the temporary
+        // replacement for phone-OTP verification, which never actually sent a real SMS
+        // and (worse) was only checked after registration had already succeeded and
+        // logged the user in, so it blocked nothing. A wrong/missing/expired answer
+        // consumes the challenge either way, so it can't be brute-forced.
+        const captchaOk = await verifyAndConsumeCaptcha(captchaId, captchaAnswer);
+        if (!captchaOk) {
+            return res.status(400).json({ msg: 'Incorrect captcha answer. Please try again.', captchaFailed: true });
+        }
 
         let user = await User.findOne({ email });
         if (user) {
