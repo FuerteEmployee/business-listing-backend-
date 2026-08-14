@@ -54,7 +54,9 @@ exports.addReview = async (req, res) => {
 
         const review = new Review({
             businessId,
+            businessName: company.name,
             userId: req.user.id,
+            authorName: req.user.name,
             rating,
             comment,
             images,

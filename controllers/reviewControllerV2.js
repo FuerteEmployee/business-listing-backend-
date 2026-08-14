@@ -40,7 +40,9 @@ exports.createReview = async (req, res) => {
         // Create review (goes to Pending for moderation)
         const review = new Review({
             businessId,
+            businessName: business.name,
             userId: req.user._id,
+            authorName: req.user.name,
             rating,
             comment,
             images: images || [],

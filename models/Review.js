@@ -6,10 +6,22 @@ const reviewSchema = new mongoose.Schema({
         ref: 'Company',
         required: true
     },
+    // Denormalized at write time so a later hard-delete of the business still
+    // lets the review render an honest "Deleted Business" instead of a broken
+    // populate lookup showing "Unknown"/null.
+    businessName: {
+        type: String,
+        default: null
+    },
     userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
+    },
+    // Same rationale as businessName, for a hard-deleted review author.
+    authorName: {
+        type: String,
+        default: null
     },
     rating: {
         type: Number,
