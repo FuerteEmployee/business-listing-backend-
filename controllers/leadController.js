@@ -382,6 +382,32 @@ exports.getLeadStats = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+// Get single lead details
+// @route   GET /api/leads/:id
+exports.getLeadById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const lead = await Lead.findById(id)
+            .populate('business', 'name slug')
+            .populate('assignedTo', 'name email');
+            
+        if (!lead) {
+            return res.status(404).json({ success: false, message: 'Lead not found' });
+        }
+
+        res.json({ 
+            success: true, 
+            lead: {
+                ...lead.toObject(),
+                score: computeLeadScore(lead)
+            }
+        });
+    } catch (err) {
+        console.error('Get Lead Detail Error:', err.message);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
 // Delete all leads (Super Admin Only)
 // @route   DELETE /api/leads
 exports.clearAllLeads = async (req, res) => {

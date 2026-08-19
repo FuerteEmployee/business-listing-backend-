@@ -54,9 +54,7 @@ exports.addReview = async (req, res) => {
 
         const review = new Review({
             businessId,
-            businessName: company.name,
             userId: req.user.id,
-            authorName: req.user.name,
             rating,
             comment,
             images,
@@ -140,11 +138,18 @@ exports.getBusinessReviews = async (req, res) => {
         const { sort = 'recent', filter = 'all' } = req.query;
         let query = { 
             businessId: req.params.businessId,
-            status: 'Approved' 
+            status: 'Approved',
+            isDeleted: { $ne: true }
         };
 
         if (filter === 'photos') {
             query.images = { $exists: true, $ne: [] };
+        } else if (filter === 'quality') {
+            query['aspects.quality'] = { $gte: 4 };
+        } else if (filter === 'service') {
+            query['aspects.service'] = { $gte: 4 };
+        } else if (filter === 'value') {
+            query['aspects.value'] = { $gte: 4 };
         }
 
         let sortQuery = { createdAt: -1 };
@@ -160,7 +165,24 @@ exports.getBusinessReviews = async (req, res) => {
             .populate('userId', 'name')
             .sort(sortQuery);
 
-        res.json(reviews);
+        const [totalCount, photosCount, qualityCount, serviceCount, valueCount] = await Promise.all([
+            Review.countDocuments({ businessId: req.params.businessId, status: 'Approved', isDeleted: { $ne: true } }),
+            Review.countDocuments({ businessId: req.params.businessId, status: 'Approved', isDeleted: { $ne: true }, images: { $exists: true, $ne: [] } }),
+            Review.countDocuments({ businessId: req.params.businessId, status: 'Approved', isDeleted: { $ne: true }, 'aspects.quality': { $gte: 4 } }),
+            Review.countDocuments({ businessId: req.params.businessId, status: 'Approved', isDeleted: { $ne: true }, 'aspects.service': { $gte: 4 } }),
+            Review.countDocuments({ businessId: req.params.businessId, status: 'Approved', isDeleted: { $ne: true }, 'aspects.value': { $gte: 4 } })
+        ]);
+
+        res.json({
+            reviews,
+            counts: {
+                all: totalCount,
+                photos: photosCount,
+                quality: qualityCount,
+                service: serviceCount,
+                value: valueCount
+            }
+        });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ msg: 'Server Error' });
@@ -278,9 +300,9 @@ exports.getAllReviews = async (req, res) => {
     }
 };
 
-// @desc    Update review status (Admin)
+// @desc    Update review status (Admin/Owner)
 // @route   PUT /api/reviews/:id/status
-// @access  Private/Admin
+// @access  Private
 exports.updateReviewStatus = async (req, res) => {
     try {
         const { status } = req.body;
@@ -288,6 +310,24 @@ exports.updateReviewStatus = async (req, res) => {
 
         if (!review) {
             return res.status(404).json({ msg: 'Review not found' });
+        }
+
+        // Authorization check: Admin/SuperAdmin or Company Owner
+        let isAuthorized = false;
+        if (req.user.role === 'Super Admin' || req.user.role === 'Admin') {
+            isAuthorized = true;
+        } else {
+            const company = await Company.findById(review.businessId);
+            if (company && company.owner && company.owner.toString() === req.user.id.toString()) {
+                isAuthorized = true;
+            }
+            if (company && req.user.companyId && req.user.companyId.toString() === review.businessId.toString()) {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ msg: 'Not authorized to change this review status' });
         }
 
         const oldStatus = review.status;
@@ -426,6 +466,9 @@ exports.replyToReview = async (req, res) => {
         };
 
         await review.save();
+
+        // Populate userId for consistent frontend rendering
+        await review.populate('userId', 'name email image');
 
         // Notify Reviewer
         await sendNotification({

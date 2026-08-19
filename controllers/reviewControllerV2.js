@@ -40,9 +40,7 @@ exports.createReview = async (req, res) => {
         // Create review (goes to Pending for moderation)
         const review = new Review({
             businessId,
-            businessName: business.name,
             userId: req.user._id,
-            authorName: req.user.name,
             rating,
             comment,
             images: images || [],
@@ -380,6 +378,7 @@ exports.replyToReview = async (req, res) => {
         };
 
         await review.save();
+        await review.populate('userId', 'name email image');
 
         res.json({ success: true, msg: 'Reply posted successfully', review });
     } catch (err) {

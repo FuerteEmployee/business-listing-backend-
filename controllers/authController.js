@@ -4,7 +4,6 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
-const { verifyAndConsumeCaptcha } = require('./captchaController');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
@@ -18,17 +17,7 @@ const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
 // @access  Public
 exports.register = async (req, res) => {
     try {
-        const { name, email, password, mobileNumber, role, captchaId, captchaAnswer } = req.body;
-
-        // Anti-bot gate, checked BEFORE any account is created - this is the temporary
-        // replacement for phone-OTP verification, which never actually sent a real SMS
-        // and (worse) was only checked after registration had already succeeded and
-        // logged the user in, so it blocked nothing. A wrong/missing/expired answer
-        // consumes the challenge either way, so it can't be brute-forced.
-        const captchaOk = await verifyAndConsumeCaptcha(captchaId, captchaAnswer);
-        if (!captchaOk) {
-            return res.status(400).json({ msg: 'Incorrect captcha answer. Please try again.', captchaFailed: true });
-        }
+        const { name, email, password, mobileNumber, role } = req.body;
 
         let user = await User.findOne({ email });
         if (user) {
@@ -153,6 +142,21 @@ exports.login = async (req, res) => {
         }
 
         await user.save();
+
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: user._id,
+                action: 'USER_LOGIN',
+                targetType: 'User',
+                targetId: user._id,
+                notes: `${user.name} logged in successfully`,
+                ipAddress: req.ip || req.connection?.remoteAddress,
+                userAgent: req.headers['user-agent']
+            });
+        } catch (auditErr) {
+            console.error('Audit log login record fail:', auditErr.message);
+        }
 
         const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
@@ -354,6 +358,28 @@ exports.revokeAllSessions = async (req, res) => {
     }
 };
 
+// @desc    Revoke a specific session
+// @route   DELETE /api/auth/sessions/:id
+// @access  Private
+exports.revokeSession = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ msg: 'User not found' });
+
+        user.loginHistory = user.loginHistory.filter(s => String(s._id) !== String(req.params.id));
+        await user.save();
+
+        res.json({
+            success: true,
+            msg: 'Session revoked successfully.',
+            sessions: user.loginHistory
+        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
 // @desc    Google OAuth Login
 // @route   POST /api/auth/google
 // @access  Public
@@ -430,6 +456,21 @@ exports.googleLogin = async (req, res) => {
         if (!user.googleId) {
             user.googleId = sub;
             await user.save();
+        }
+
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: user._id,
+                action: 'USER_LOGIN',
+                targetType: 'User',
+                targetId: user._id,
+                notes: `${user.name} logged in via Google successfully`,
+                ipAddress: req.ip || req.connection?.remoteAddress,
+                userAgent: req.headers['user-agent']
+            });
+        } catch (auditErr) {
+            console.error('Audit log google login record fail:', auditErr.message);
         }
 
         const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
@@ -513,6 +554,21 @@ exports.facebookLogin = async (req, res) => {
             });
         }
 
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: user._id,
+                action: 'USER_LOGIN',
+                targetType: 'User',
+                targetId: user._id,
+                notes: `${user.name} logged in via Facebook successfully`,
+                ipAddress: req.ip || req.connection?.remoteAddress,
+                userAgent: req.headers['user-agent']
+            });
+        } catch (auditErr) {
+            console.error('Audit log facebook login record fail:', auditErr.message);
+        }
+
         const token = generateToken(user._id, user.role, user.name, user.email, user.company || user.companyId, user.tokenVersion);
 
         res.json({
@@ -529,5 +585,27 @@ exports.facebookLogin = async (req, res) => {
     } catch (err) {
         console.error('Facebook Auth Error:', err.response?.data || err.message);
         res.status(401).json({ success: false, msg: 'Facebook Authentication failed' });
+    }
+};
+
+// @desc    Logout user
+// @route   POST /api/auth/logout
+// @access  Private
+exports.logout = async (req, res) => {
+    try {
+        const AdminAuditLog = require('../models/AdminAuditLog');
+        await AdminAuditLog.create({
+            adminId: req.user._id,
+            action: 'USER_LOGOUT',
+            targetType: 'User',
+            targetId: req.user._id,
+            notes: `${req.user.name} logged out successfully`,
+            ipAddress: req.ip || req.connection?.remoteAddress,
+            userAgent: req.headers['user-agent']
+        });
+        res.json({ success: true, msg: 'Logged out successfully' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error' });
     }
 };

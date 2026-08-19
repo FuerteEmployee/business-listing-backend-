@@ -779,8 +779,14 @@ const logEvent = async (req, res) => {
     try {
         const { event, businessId, city, device, source, sessionId } = req.body;
 
+        let eventType = event || 'view';
+        if (eventType === 'view') eventType = 'business_listing_view';
+        if (eventType === 'call') eventType = 'call_click';
+        if (eventType === 'enquiry') eventType = 'enquiry_submit';
+        if (eventType === 'whatsapp') eventType = 'contact_click';
+
         const eventData = {
-            eventType: event || 'view',
+            eventType,
             userId: req.user ? req.user._id : null,
             sessionId: sessionId || req.ip || 'anonymous-session',
             city,
@@ -794,7 +800,7 @@ const logEvent = async (req, res) => {
 
         // Only attach businessId if it's a valid ObjectId
         if (businessId && mongoose.Types.ObjectId.isValid(businessId)) {
-            eventData.businessId = businessId;
+            eventData.businessId = new mongoose.Types.ObjectId(businessId);
         }
 
         const analyticsEvent = new AnalyticsEvent(eventData);
@@ -833,10 +839,10 @@ const getMerchantAnalyticsOverview = async (req, res) => {
             {
                 $group: {
                     _id: null,
-                    views: { $sum: { $cond: [{ $eq: ['$eventType', 'business_listing_view'] }, 1, 0] } },
-                    calls: { $sum: { $cond: [{ $eq: ['$eventType', 'call_click'] }, 1, 0] } },
-                    enquiries: { $sum: { $cond: [{ $eq: ['$eventType', 'enquiry_submit'] }, 1, 0] } },
-                    whatsapp: { $sum: { $cond: [{ $eq: ['$eventType', 'contact_click'] }, 1, 0] } }
+                    views: { $sum: { $cond: [{ $in: ['$eventType', ['business_listing_view', 'view']] }, 1, 0] } },
+                    calls: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'call']] }, 1, 0] } },
+                    enquiries: { $sum: { $cond: [{ $in: ['$eventType', ['enquiry_submit', 'enquiry']] }, 1, 0] } },
+                    whatsapp: { $sum: { $cond: [{ $in: ['$eventType', ['contact_click', 'whatsapp']] }, 1, 0] } }
                 }
             }
         ]);
@@ -851,8 +857,8 @@ const getMerchantAnalyticsOverview = async (req, res) => {
             {
                 $group: {
                     _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-                    views: { $sum: { $cond: [{ $eq: ['$eventType', 'business_listing_view'] }, 1, 0] } },
-                    conversions: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'enquiry_submit', 'contact_click']] }, 1, 0] } }
+                    views: { $sum: { $cond: [{ $in: ['$eventType', ['business_listing_view', 'view']] }, 1, 0] } },
+                    conversions: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'call', 'enquiry_submit', 'enquiry', 'contact_click', 'whatsapp']] }, 1, 0] } }
                 }
             },
             { $sort: { _id: 1 } }
@@ -885,15 +891,17 @@ const getBusinessAnalyticsDetailed = async (req, res) => {
             return res.status(403).json({ success: false, msg: 'Not authorized' });
         }
 
+        const bId = new mongoose.Types.ObjectId(businessId);
+
         // 1. Device Breakdown
         const deviceData = await AnalyticsEvent.aggregate([
-            { $match: { businessId: mongoose.Types.ObjectId(businessId), timestamp: { $gte: start } } },
+            { $match: { businessId: bId, timestamp: { $gte: start } } },
             { $group: { _id: '$deviceInfo.deviceType', count: { $sum: 1 } } }
         ]);
 
         // 2. Rating Trend (Average rating over time)
         const ratingTrend = await Review.aggregate([
-            { $match: { businessId: mongoose.Types.ObjectId(businessId), isDeleted: { $ne: true } } },
+            { $match: { businessId: bId, isDeleted: { $ne: true } } },
             {
                 $group: {
                     _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -908,8 +916,8 @@ const getBusinessAnalyticsDetailed = async (req, res) => {
         const keywordStats = await AnalyticsEvent.aggregate([
             {
                 $match: {
-                    businessId: mongoose.Types.ObjectId(businessId),
-                    eventType: 'business_listing_view',
+                    businessId: bId,
+                    eventType: { $in: ['business_listing_view', 'view'] },
                     timestamp: { $gte: start }
                 }
             },
@@ -962,8 +970,8 @@ const getBusinessAnalyticsDetailed = async (req, res) => {
             {
                 $group: {
                     _id: '$businessId',
-                    views: { $sum: { $cond: [{ $eq: ['$eventType', 'business_listing_view'] }, 1, 0] } },
-                    conversions: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'enquiry_submit', 'contact_click', 'whatsapp']] }, 1, 0] } }
+                    views: { $sum: { $cond: [{ $in: ['$eventType', ['business_listing_view', 'view']] }, 1, 0] } },
+                    conversions: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'call', 'enquiry_submit', 'enquiry', 'contact_click', 'whatsapp']] }, 1, 0] } }
                 }
             },
             {
@@ -977,15 +985,34 @@ const getBusinessAnalyticsDetailed = async (req, res) => {
 
         // 5. Daily Trends
         const trends = await AnalyticsEvent.aggregate([
-            { $match: { businessId: mongoose.Types.ObjectId(businessId), timestamp: { $gte: start } } },
+            { $match: { businessId: bId, timestamp: { $gte: start } } },
             {
                 $group: {
                     _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-                    views: { $sum: { $cond: [{ $eq: ['$eventType', 'business_listing_view'] }, 1, 0] } },
-                    conversions: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'enquiry_submit', 'contact_click', 'whatsapp']] }, 1, 0] } }
+                    views: { $sum: { $cond: [{ $in: ['$eventType', ['business_listing_view', 'view']] }, 1, 0] } },
+                    conversions: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'call', 'enquiry_submit', 'enquiry', 'contact_click', 'whatsapp']] }, 1, 0] } }
                 }
             },
             { $sort: { _id: 1 } }
+        ]);
+
+        // 6. Aggregate KPIs/Metrics for this business
+        const stats = await AnalyticsEvent.aggregate([
+            {
+                $match: {
+                    businessId: bId,
+                    timestamp: { $gte: start }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    views: { $sum: { $cond: [{ $in: ['$eventType', ['business_listing_view', 'view']] }, 1, 0] } },
+                    calls: { $sum: { $cond: [{ $in: ['$eventType', ['call_click', 'call']] }, 1, 0] } },
+                    enquiries: { $sum: { $cond: [{ $in: ['$eventType', ['enquiry_submit', 'enquiry']] }, 1, 0] } },
+                    whatsapp: { $sum: { $cond: [{ $in: ['$eventType', ['contact_click', 'whatsapp']] }, 1, 0] } }
+                }
+            }
         ]);
 
         res.json({
@@ -995,7 +1022,8 @@ const getBusinessAnalyticsDetailed = async (req, res) => {
             ratingTrend,
             topKeywords: keywordStats,
             marketBenchmark: competitorAvg[0] || { avgViews: 0, avgConversions: 0 },
-            trends
+            trends,
+            metrics: stats[0] || { views: 0, calls: 0, enquiries: 0, whatsapp: 0 }
         });
     } catch (err) {
         console.error(err.message);

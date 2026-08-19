@@ -19,15 +19,35 @@ exports.getAuditLogs = async (req, res) => {
         } = req.query;
 
         let query = {};
+        let scopeQuery = null;
 
-        // Filter by admin user
-        if (adminId) {
+        const isSystemAdmin = req.user.role === 'Super Admin' || 
+            (req.user.role && !['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role));
+
+        if (!isSystemAdmin) {
+            const Company = require('../models/Company');
+            const myCompanies = await Company.find({ owner: req.user._id }).select('_id');
+            const myCompanyIds = myCompanies.map(c => c._id);
+            
+            scopeQuery = {
+                $or: [
+                    { adminId: req.user._id },
+                    { targetType: 'Listing', targetId: { $in: myCompanyIds } }
+                ]
+            };
+        } else if (adminId) {
             query.adminId = adminId;
         }
 
         // Filter by action
         if (action) {
-            query.action = action;
+            let actionRegex = action;
+            if (action === 'CREATE') actionRegex = 'CREATED';
+            if (action === 'UPDATE') actionRegex = 'UPDATED|EDITED';
+            if (action === 'DELETE') actionRegex = 'DELETED|ARCHIVED|DEACTIVATED';
+            if (action === 'APPROVE') actionRegex = 'APPROVED';
+            if (action === 'REJECT') actionRegex = 'REJECTED';
+            query.action = new RegExp(actionRegex, 'i');
         }
 
         // Filter by target type
@@ -40,6 +60,15 @@ exports.getAuditLogs = async (req, res) => {
             query.createdAt = {};
             if (startDate) query.createdAt.$gte = new Date(startDate);
             if (endDate) query.createdAt.$lte = new Date(endDate);
+        }
+
+        // Merge scopeQuery if set
+        if (scopeQuery) {
+            if (Object.keys(query).length > 0) {
+                query = { $and: [scopeQuery, query] };
+            } else {
+                query = scopeQuery;
+            }
         }
 
         // Pagination
@@ -223,12 +252,47 @@ exports.exportAuditLogsCsv = async (req, res) => {
         const { action, targetType, startDate, endDate } = req.query;
 
         let query = {};
-        if (action) query.action = action;
+        let scopeQuery = null;
+
+        const isSystemAdmin = req.user.role === 'Super Admin' || 
+            (req.user.role && !['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role));
+
+        if (!isSystemAdmin) {
+            const Company = require('../models/Company');
+            const myCompanies = await Company.find({ owner: req.user._id }).select('_id');
+            const myCompanyIds = myCompanies.map(c => c._id);
+            
+            scopeQuery = {
+                $or: [
+                    { adminId: req.user._id },
+                    { targetType: 'Listing', targetId: { $in: myCompanyIds } }
+                ]
+            };
+        }
+
+        if (action) {
+            let actionRegex = action;
+            if (action === 'CREATE') actionRegex = 'CREATED';
+            if (action === 'UPDATE') actionRegex = 'UPDATED|EDITED';
+            if (action === 'DELETE') actionRegex = 'DELETED|ARCHIVED|DEACTIVATED';
+            if (action === 'APPROVE') actionRegex = 'APPROVED';
+            if (action === 'REJECT') actionRegex = 'REJECTED';
+            query.action = new RegExp(actionRegex, 'i');
+        }
         if (targetType) query.targetType = targetType;
         if (startDate || endDate) {
             query.createdAt = {};
             if (startDate) query.createdAt.$gte = new Date(startDate);
             if (endDate) query.createdAt.$lte = new Date(endDate);
+        }
+
+        // Merge scopeQuery if set
+        if (scopeQuery) {
+            if (Object.keys(query).length > 0) {
+                query = { $and: [scopeQuery, query] };
+            } else {
+                query = scopeQuery;
+            }
         }
 
         const logs = await AdminAuditLog.find(query)

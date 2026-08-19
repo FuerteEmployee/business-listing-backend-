@@ -13,7 +13,11 @@ const {
     getSimilarBusinesses,
     getQuestions,
     postQuestion,
-    importOSM
+    importOSM,
+    getMerchantQuestions,
+    answerQuestion,
+    getAdminQuestions,
+    deleteQuestion
 } = require('../controllers/companyController');
 const { protect, attachOwnedBrands, checkPermission, optionalAuth } = require('../middleware/authMiddleware');
 
@@ -58,6 +62,18 @@ router.post('/:id/report', protect, (req, res, next) => {
 
 // @route   GET /api/companies/my-companies
 router.get('/my-companies', protect, getMyCompanies);
+
+// @route   GET /api/companies/questions/merchant
+router.get('/questions/merchant', protect, getMerchantQuestions);
+
+// @route   PUT /api/companies/questions/:id/answer
+router.put('/questions/:id/answer', protect, answerQuestion);
+
+// @route   GET /api/companies/questions/admin
+router.get('/questions/admin', protect, getAdminQuestions);
+
+// @route   DELETE /api/companies/questions/:id
+router.delete('/questions/:id', protect, deleteQuestion);
 
 // @route   GET /api/companies/:id
 router.get('/:id', getCompanyById);

@@ -294,6 +294,22 @@ const companySchema = new mongoose.Schema({
             default: []
         }
     },
+    favicon: {
+        type: String,
+        default: null
+    },
+    primaryColor: {
+        type: String,
+        default: '#4f46e5'
+    },
+    secondaryColor: {
+        type: String,
+        default: '#f8fafc'
+    },
+    footerText: {
+        type: String,
+        default: ''
+    },
     changeHistory: [
         {
             field: String,

@@ -76,16 +76,15 @@ router.delete('/articles/:id', deleteArticle);
 // Public route for reading articles
 router.get('/articles/public/:slug', getArticleBySlug);
 
-// ==================== STATIC PAGE ROUTES ====================
+// Public route for reading pages
+router.get('/pages/public/:slug', getStaticPageBySlug);
+
 // Admin routes
 router.use('/pages', authorize('Admin', 'Super Admin'));
 router.get('/pages', getStaticPages);
 router.post('/pages', createStaticPage);
 router.put('/pages/:id', updateStaticPage);
 router.delete('/pages/:id', deleteStaticPage);
-
-// Public route for reading pages
-router.get('/pages/public/:slug', getStaticPageBySlug);
 
 // ==================== MEDIA ROUTES ====================
 // Admin routes
@@ -94,16 +93,15 @@ router.get('/media', getMedia);
 router.post('/media/upload', upload.single('file'), uploadMedia);
 router.delete('/media/:id', deleteMedia);
 
-// ==================== FAQ ROUTES ====================
+// Public route for reading FAQs
+router.get('/faqs/public/:category', getPublishedFAQs);
+
 // Admin routes
 router.use('/faqs', authorize('Admin', 'Super Admin'));
 router.get('/faqs', getFAQs);
 router.post('/faqs', createFAQ);
 router.put('/faqs/:id', updateFAQ);
 router.delete('/faqs/:id', deleteFAQ);
-
-// Public route for reading FAQs
-router.get('/faqs/public/:category', getPublishedFAQs);
 
 // ==================== BANNER ROUTES ====================
 // Admin/Super Admin only

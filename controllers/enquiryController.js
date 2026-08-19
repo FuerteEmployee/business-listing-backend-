@@ -1,6 +1,7 @@
 const Enquiry = require('../models/Enquiry');
 const User = require('../models/User');
 const Company = require('../models/Company');
+const Lead = require('../models/Lead');
 const nodemailer = require('nodemailer');
 const { sendNotification } = require('../services/notificationService');
 const { sendSMS } = require('../utils/sms');
@@ -122,6 +123,22 @@ exports.createEnquiry = async (req, res) => {
 
         // Send In-app & Multi-channel notifications to Managers of these businesses
         for (const business of businesses) {
+            // Auto create a Lead for the merchant so it displays in their Leads dashboard
+            const newLead = new Lead({
+                name,
+                phone,
+                email: email || (req.user ? req.user.email : null),
+                category: business.category || 'General',
+                type: 'Requirement',
+                business: business._id,
+                agreedToPrivacy: true,
+                source: req.body.source || 'Business Enquiry',
+                assignedTo: business.owner || null,
+                assignedToName: business.owner ? 'Merchant Owner' : 'Unassigned',
+                message: message
+            });
+            await newLead.save();
+
             if (business.owner) {
                 await sendNotification({
                     recipient: business.owner,
@@ -129,7 +146,7 @@ exports.createEnquiry = async (req, res) => {
                     type: 'System',
                     title: 'New Enquiry Received',
                     message: `${name} sent a new enquiry for ${business.name}`,
-                    link: `/merchant/leads/${enquiry._id}`,
+                    link: `/brand/lead/${newLead._id}`,
                     metadata: { enquiryId: enquiry._id, businessId: business._id }
                 });
             }

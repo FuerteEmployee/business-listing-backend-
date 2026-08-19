@@ -188,8 +188,22 @@ const getDashboardStats = async (req, res) => {
                 }
             ]),
 
-            // Recent Activity (derived from multiple collections) - Increased to 20
-            Promise.all([
+            isBrandOwner 
+            ? Promise.all([
+                Lead.find(leadQuery).sort({ createdAt: -1 }).limit(10).select('name category source createdAt'),
+                Product.find({ listingId: { $in: req.ownedBrandIds || [] } }).sort({ createdAt: -1 }).limit(5).select('name category createdAt'),
+                Service.find({ listingId: { $in: req.ownedBrandIds || [] } }).sort({ createdAt: -1 }).limit(5).select('name category createdAt'),
+                Company.find(companyQuery).sort({ createdAt: -1 }).limit(5).select('name status createdAt')
+            ]).then(([leads, products, services, companies]) => {
+                const activities = [
+                    ...leads.map(l => ({ type: 'lead', title: `New Lead: ${l.name}`, detail: l.category, time: l.createdAt })),
+                    ...products.map(p => ({ type: 'product', title: `Product Added: ${p.name}`, detail: p.category, time: p.createdAt })),
+                    ...services.map(s => ({ type: 'service', title: `Service Added: ${s.name}`, detail: s.category, time: s.createdAt })),
+                    ...companies.map(c => ({ type: 'company', title: `Brand Overview: ${c.name}`, detail: c.status, time: c.createdAt }))
+                ];
+                return activities.sort((a, b) => b.time - a.time).slice(0, 20);
+            })
+            : Promise.all([
                 Lead.find(leadQuery).sort({ createdAt: -1 }).limit(10).select('name category source createdAt'),
                 ClaimRequest.find().sort({ createdAt: -1 }).limit(5).select('fullName businessEmail status createdAt'),
                 User.find().sort({ createdAt: -1 }).limit(5).select('name role createdAt'),

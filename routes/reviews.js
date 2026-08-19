@@ -35,7 +35,7 @@ router.post('/:id/report', protect, reportReview);
 
 // Admin Routes
 router.get('/', protect, admin, getAllReviews);
-router.put('/:id/status', protect, admin, updateReviewStatus);
+router.put('/:id/status', protect, updateReviewStatus);
 router.delete('/:id', protect, admin, deleteReview);
 
 module.exports = router;

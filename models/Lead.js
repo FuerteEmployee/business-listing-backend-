@@ -79,6 +79,14 @@ const leadSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
     },
+    email: {
+        type: String,
+        trim: true
+    },
+    message: {
+        type: String,
+        trim: true
+    },
     merchantReply: {
         text: String,
         date: Date

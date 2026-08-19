@@ -4,17 +4,23 @@ const { upload, cloudinary } = require('../config/cloudinary');
 
 // @route   POST /api/upload
 // @desc    Upload a single image to Cloudinary, returns { url }
-router.post('/', upload.single('image'), (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ msg: 'No image file provided' });
+router.post('/', (req, res) => {
+    upload.single('image')(req, res, (err) => {
+        if (err) {
+            console.error('Multer/Cloudinary error:', err);
+            return res.status(400).json({ msg: err.message || 'Error uploading file' });
         }
-        // Cloudinary URL is automatically set by multer-storage-cloudinary
-        res.json({ url: req.file.path });
-    } catch (err) {
-        console.error('Upload error:', err);
-        res.status(500).json({ msg: 'Image upload failed', error: err.message });
-    }
+        try {
+            if (!req.file) {
+                return res.status(400).json({ msg: 'No image file provided' });
+            }
+            // Cloudinary URL is automatically set by multer-storage-cloudinary
+            res.json({ url: req.file.path });
+        } catch (error) {
+            console.error('Upload error:', error);
+            res.status(500).json({ msg: 'Image upload failed', error: error.message });
+        }
+    });
 });
 
 // @route   DELETE /api/upload/:publicId

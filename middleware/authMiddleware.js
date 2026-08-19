@@ -159,6 +159,16 @@ exports.checkPermission = (module, action) => {
         // Super Admin has all permissions bypass
         if (req.user.role === 'Super Admin') return next();
 
+        // Brand Owners/merchants can access their own audit logs and CSV export
+        if (module === 'auditLog' && action === 'read' && 
+            ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role)) {
+            return next();
+        }
+        if (module === 'reporting' && action === 'export' && req.originalUrl.includes('/audit-logs/export/csv') &&
+            ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role)) {
+            return next();
+        }
+
         try {
             const role = await RBACRole.findOne({ name: req.user.role });
 

@@ -2,42 +2,9 @@ const Company = require('../models/Company');
 const AdminAuditLog = require('../models/AdminAuditLog');
 const User = require('../models/User');
 const Review = require('../models/Review');
-const RBACRole = require('../models/RBACRole');
 const mongoose = require('mongoose');
 const { resolveManualLocation } = require('../utils/resolveManualLocation');
 const nodemailer = require('nodemailer');
-
-/**
- * Same resolution rules as the checkPermission middleware, for endpoints that
- * gate more than one distinct permission behind a single route (e.g. a bulk
- * endpoint whose requested action needs 'approve' for approve/reject but
- * 'delete' for delete).
- */
-const hasPermission = async (user, moduleName, action) => {
-    if (!user || !user.role) return false;
-    if (user.role === 'Super Admin') return true;
-    const role = await RBACRole.findOne({ name: user.role });
-    return !!(role && role.permissions && role.permissions[moduleName] && role.permissions[moduleName][action] === true);
-};
-
-/**
- * Shared catch-block error responder: turns a Mongoose ValidationError into a
- * clean 400 with field-level messages (matching createListingAdmin's existing
- * handling) instead of the generic 500 most handlers in this file fall back to.
- */
-/** Escape regex metacharacters before interpolating user/DB text into a $regex filter. */
-const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const sendCaughtError = (res, err, fallbackMsg = 'Server Error') => {
-    console.error(err.message);
-    if (err.name === 'ValidationError') {
-        const fieldErrors = Object.entries(err.errors || {}).map(
-            ([field, e]) => `${field}: ${e.message}`
-        );
-        return res.status(400).json({ success: false, msg: 'Validation failed', errors: fieldErrors });
-    }
-    return res.status(500).json({ success: false, msg: fallbackMsg, error: err.message });
-};
 
 // Configure nodemailer
 const transporter = nodemailer.createTransport({
@@ -68,56 +35,23 @@ exports.getAllListingsAdmin = async (req, res) => {
         } = req.query;
 
         let query = {};
-        const conditions = [];
 
         // Search by business name, phone, or owner email
         if (search) {
-            conditions.push({
-                $or: [
-                    { name: { $regex: escapeRegex(search), $options: 'i' } },
-                    { phone: { $regex: escapeRegex(search), $options: 'i' } },
-                    { email: { $regex: escapeRegex(search), $options: 'i' } }
-                ]
-            });
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } }
+            ];
         }
 
         // Filter by status
         if (status) {
-            if (status === 'PendingApproval' || status === 'Pending') {
-                conditions.push({
-                    $or: [
-                        { status: 'Pending' },
-                        { 'approvalStatus.stage': { $in: ['AwaitingReview', 'UnderReview', 'Pending'] } }
-                    ]
-                });
-            } else if (status === 'Approved' || status === 'Active') {
-                conditions.push({
-                    $or: [
-                        { status: { $in: ['Approved', 'Active'] } },
-                        { 'approvalStatus.stage': 'Approved' }
-                    ]
-                });
-            } else if (status === 'Rejected') {
-                conditions.push({
-                    $or: [
-                        { status: 'Rejected' },
-                        { 'approvalStatus.stage': 'Rejected' }
-                    ]
-                });
-            } else if (status === 'Flagged') {
-                conditions.push({
-                    $or: [
-                        { status: 'Flagged' },
-                        { isFlagged: true }
-                    ]
-                });
+            // Handle special filter for pending approval
+            if (status === 'PendingApproval') {
+                query.status = 'Pending';
             } else {
-                conditions.push({
-                    $or: [
-                        { status: status },
-                        { 'approvalStatus.stage': status }
-                    ]
-                });
+                query.status = status;
             }
         }
 
@@ -145,10 +79,6 @@ exports.getAllListingsAdmin = async (req, res) => {
                 end.setHours(23, 59, 59, 999);
                 query.createdAt.$lte = end;
             }
-        }
-
-        if (conditions.length > 0) {
-            query.$and = conditions;
         }
 
         // Pagination
@@ -188,7 +118,8 @@ exports.getAllListingsAdmin = async (req, res) => {
             }
         });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -241,37 +172,22 @@ exports.bulkReorderListings = async (req, res) => {
             return res.status(400).json({ success: false, msg: 'Invalid ranks data' });
         }
 
-        // Skip malformed ids instead of letting one bad id abort the whole batch.
-        const validRanks = ranks.filter(item => mongoose.Types.ObjectId.isValid(item?.id));
-        const skippedInvalidIds = ranks.length - validRanks.length;
-
-        const bulkOps = validRanks.map(item => ({
+        const bulkOps = ranks.map(item => ({
             updateOne: {
                 filter: { _id: item.id },
                 update: { $set: { manualRank: parseInt(item.rank) || 0 } }
             }
         }));
 
-        if (bulkOps.length > 0) {
-            await Company.bulkWrite(bulkOps);
-        }
-
-        await AdminAuditLog.create({
-            adminId: req.user?._id,
-            action: 'LISTING_EDITED',
-            targetType: 'Listing',
-            notes: `Bulk-reordered ${bulkOps.length} listings` + (skippedInvalidIds ? ` (${skippedInvalidIds} invalid id(s) skipped)` : ''),
-            ipAddress: req.ip,
-            userAgent: req.headers['user-agent']
-        });
+        await Company.bulkWrite(bulkOps);
 
         res.json({
             success: true,
-            msg: 'Listings reordered successfully',
-            skippedInvalidIds
+            msg: 'Listings reordered successfully'
         });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error('Bulk Reorder Error:', err);
+        res.status(500).json({ success: false, msg: 'Server Error' });
     }
 };
 
@@ -300,19 +216,10 @@ exports.getListingDetailAdmin = async (req, res) => {
         }
 
         // Get reviews for this listing
-        const reviewDocs = await Review.find({ businessId: listing._id })
+        const reviews = await Review.find({ businessId: listing._id })
             .populate('userId', 'name')
-            .select('rating comment status createdAt userId authorName')
+            .select('rating comment status createdAt')
             .limit(20);
-
-        // Fall back to the name captured at write time when the author was
-        // since hard-deleted (populate resolves the dangling ref to null),
-        // so the admin sees "Deleted user" instead of a broken lookup.
-        const reviews = reviewDocs.map(r => {
-            const obj = r.toObject();
-            obj.authorDisplayName = obj.userId?.name || obj.authorName || 'Deleted user';
-            return obj;
-        });
 
         res.json({
             success: true,
@@ -325,7 +232,8 @@ exports.getListingDetailAdmin = async (req, res) => {
             }
         });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -345,9 +253,6 @@ exports.approveListing = async (req, res) => {
         listing.approvalStatus.stage = 'Approved';
         listing.approvalStatus.reviewedBy = req.user._id;
         listing.approvalStatus.reviewedAt = new Date();
-        // Approving resolves any prior flag — otherwise the listing keeps
-        // matching the "Flagged" filter forever after being re-approved.
-        listing.isFlagged = false;
         await listing.save();
 
         // Log audit
@@ -379,7 +284,8 @@ exports.approveListing = async (req, res) => {
 
         res.json({ success: true, msg: 'Listing approved successfully', listing });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -404,7 +310,6 @@ exports.rejectListing = async (req, res) => {
         listing.approvalStatus.reviewedBy = req.user._id;
         listing.approvalStatus.reviewedAt = new Date();
         listing.approvalStatus.rejectionReason = reason;
-        listing.isFlagged = false;
         await listing.save();
 
         // Log audit
@@ -436,7 +341,8 @@ exports.rejectListing = async (req, res) => {
 
         res.json({ success: true, msg: 'Listing rejected successfully', listing });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -473,7 +379,8 @@ exports.requestMoreInfo = async (req, res) => {
 
         res.json({ success: true, msg: 'Info request sent to merchant', listing });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -506,7 +413,8 @@ exports.verifyBusinessBadge = async (req, res) => {
 
         res.json({ success: true, msg: 'Business badge verified', listing });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -548,7 +456,8 @@ exports.flagListing = async (req, res) => {
 
         res.json({ success: true, msg: 'Listing flagged successfully', listing });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -585,7 +494,8 @@ exports.suspendListing = async (req, res) => {
 
         res.json({ success: true, msg: 'Listing suspended successfully', listing });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -612,7 +522,8 @@ exports.deleteListing = async (req, res) => {
 
         res.json({ success: true, msg: 'Listing deleted permanently' });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -631,7 +542,7 @@ exports.checkDuplicates = async (req, res) => {
             $or: [
                 { phone: listing.phone },
                 { email: listing.email },
-                { name: { $regex: escapeRegex(listing.name), $options: 'i' } }
+                { name: { $regex: listing.name, $options: 'i' } }
             ]
         }).select('name phone email city_id');
 
@@ -641,7 +552,8 @@ exports.checkDuplicates = async (req, res) => {
             hasPossibleDuplicates: duplicates.length > 0
         });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -660,39 +572,16 @@ exports.bulkListingAction = async (req, res) => {
             return res.status(400).json({ success: false, msg: 'Invalid bulk action' });
         }
 
-        if (action === 'reject' && !reason) {
-            return res.status(400).json({ success: false, msg: 'Rejection reason is required' });
-        }
-
-        // Delete needs the stronger 'delete' permission; approve/reject need 'approve' —
-        // matching what the equivalent single-item routes require. Without this, a role
-        // granted only 'write' (not 'approve'/'delete') could mass-approve/reject/delete
-        // via this one endpoint despite being correctly blocked on the single-item routes.
-        const requiredAction = action === 'delete' ? 'delete' : 'approve';
-        if (!(await hasPermission(req.user, 'listingManagement', requiredAction))) {
-            return res.status(403).json({
-                success: false,
-                msg: `Access Denied: You do not have '${requiredAction}' permission for 'listingManagement'`
-            });
-        }
-
-        // Skip malformed ids instead of letting one bad id abort the entire batch.
-        const validIds = ids.filter(id => mongoose.Types.ObjectId.isValid(id));
-        const skippedInvalidIds = ids.length - validIds.length;
-        if (validIds.length === 0) {
-            return res.status(400).json({ success: false, msg: 'No valid listing IDs provided' });
-        }
-
         let result;
         if (action === 'delete') {
-            result = await Company.deleteMany({ _id: { $in: validIds } });
-
+            result = await Company.deleteMany({ _id: { $in: ids } });
+            
             // Log audit for deletion
             await AdminAuditLog.create({
                 adminId: req.user._id,
                 action: 'LISTING_BULK_DELETED',
                 targetType: 'Listing',
-                notes: `Deleted ${result.deletedCount} listings` + (skippedInvalidIds ? ` (${skippedInvalidIds} invalid id(s) skipped)` : ''),
+                notes: `Deleted ${ids.length} listings`,
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent']
             });
@@ -701,7 +590,7 @@ exports.bulkListingAction = async (req, res) => {
                 approve: 'Approved',
                 reject: 'Rejected'
             };
-
+            
             const stageMap = {
                 approve: 'Approved',
                 reject: 'Rejected'
@@ -711,18 +600,15 @@ exports.bulkListingAction = async (req, res) => {
                 status: statusMap[action],
                 'approvalStatus.stage': stageMap[action],
                 'approvalStatus.reviewedBy': req.user._id,
-                'approvalStatus.reviewedAt': new Date(),
-                // Approving/rejecting resolves any prior flag — otherwise the listing
-                // keeps matching the "Flagged" filter forever after being re-approved.
-                isFlagged: false
+                'approvalStatus.reviewedAt': new Date()
             };
 
-            if (action === 'reject') {
+            if (action === 'reject' && reason) {
                 updateData['approvalStatus.rejectionReason'] = reason;
             }
 
             result = await Company.updateMany(
-                { _id: { $in: validIds } },
+                { _id: { $in: ids } },
                 { $set: updateData }
             );
 
@@ -731,7 +617,7 @@ exports.bulkListingAction = async (req, res) => {
                 adminId: req.user._id,
                 action: action === 'approve' ? 'LISTING_BULK_APPROVED' : 'LISTING_BULK_REJECTED',
                 targetType: 'Listing',
-                notes: `${action === 'approve' ? 'Approved' : 'Rejected'} ${result.modifiedCount} listings` + (skippedInvalidIds ? ` (${skippedInvalidIds} invalid id(s) skipped)` : ''),
+                notes: `${action === 'approve' ? 'Approved' : 'Rejected'} ${ids.length} listings`,
                 changes: { after: { status: statusMap[action], reason } },
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent']
@@ -741,11 +627,11 @@ exports.bulkListingAction = async (req, res) => {
         res.json({
             success: true,
             msg: `Bulk ${action} successful`,
-            affectedCount: result.modifiedCount || result.deletedCount || 0,
-            skippedInvalidIds
+            affectedCount: result.modifiedCount || result.deletedCount || 0
         });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -756,57 +642,14 @@ exports.exportListingsCsv = async (req, res) => {
         const { search, status, category, city, plan, dateStart, dateEnd } = req.query;
 
         let query = {};
-        const conditions = [];
-
         if (search) {
-            conditions.push({
-                $or: [
-                    { name: { $regex: escapeRegex(search), $options: 'i' } },
-                    { phone: { $regex: escapeRegex(search), $options: 'i' } },
-                    { email: { $regex: escapeRegex(search), $options: 'i' } }
-                ]
-            });
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } }
+            ];
         }
-
-        if (status) {
-            if (status === 'PendingApproval' || status === 'Pending') {
-                conditions.push({
-                    $or: [
-                        { status: 'Pending' },
-                        { 'approvalStatus.stage': { $in: ['AwaitingReview', 'UnderReview', 'Pending'] } }
-                    ]
-                });
-            } else if (status === 'Approved' || status === 'Active') {
-                conditions.push({
-                    $or: [
-                        { status: { $in: ['Approved', 'Active'] } },
-                        { 'approvalStatus.stage': 'Approved' }
-                    ]
-                });
-            } else if (status === 'Rejected') {
-                conditions.push({
-                    $or: [
-                        { status: 'Rejected' },
-                        { 'approvalStatus.stage': 'Rejected' }
-                    ]
-                });
-            } else if (status === 'Flagged') {
-                conditions.push({
-                    $or: [
-                        { status: 'Flagged' },
-                        { isFlagged: true }
-                    ]
-                });
-            } else {
-                conditions.push({
-                    $or: [
-                        { status: status },
-                        { 'approvalStatus.stage': status }
-                    ]
-                });
-            }
-        }
-
+        if (status) query.status = status === 'PendingApproval' ? 'Pending' : status;
         if (category) query.category_id = category;
         if (city) query.city_id = city;
         if (plan) query.plan = plan;
@@ -820,15 +663,10 @@ exports.exportListingsCsv = async (req, res) => {
             }
         }
 
-        if (conditions.length > 0) {
-            query.$and = conditions;
-        }
-
         const listings = await Company.find(query)
             .populate('owner', 'name email')
             .populate('category_id', 'name')
             .populate('city_id', 'name')
-            .populate('plan', 'name')
             .sort('-createdAt');
 
         // Generate CSV content
@@ -851,21 +689,13 @@ exports.exportListingsCsv = async (req, res) => {
             ...rows.map(row => row.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
         ].join('\n');
 
-        await AdminAuditLog.create({
-            adminId: req.user?._id,
-            action: 'LISTING_EXPORTED',
-            targetType: 'Listing',
-            notes: `Exported ${listings.length} listings to CSV`,
-            ipAddress: req.ip,
-            userAgent: req.headers['user-agent']
-        });
-
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', `attachment; filename=listings_export_${new Date().getTime()}.csv`);
         res.status(200).send(csvContent);
 
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -887,7 +717,8 @@ exports.getListingAuditTrail = async (req, res) => {
             auditTrail: listing.changeHistory.sort((a, b) => b.date - a.date)
         });
     } catch (err) {
-        return sendCaughtError(res, err);
+        console.error(err.message);
+        res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
 
@@ -970,50 +801,25 @@ exports.updateListingAdmin = async (req, res) => {
             return res.status(404).json({ success: false, msg: 'Listing not found' });
         }
 
-        // Sanitise sentinel values and resolve any "Add Manually..." location
-        // entries to real DB records, matching createListingAdmin.
-        await resolveManualLocation(req.body);
-
         // Update fields directly from req.body
         const updateFields = req.body;
-
-        // Snapshot tracked fields before mutation so we can log a field-level
-        // change history, matching the merchant-facing companyController.updateCompany.
-        const TRACKED_FIELDS = ['name', 'status', 'category', 'category_id', 'owner', 'manualRank', 'city_id', 'area_id', 'phone', 'email', 'address'];
-        const beforeSnapshot = {};
-        TRACKED_FIELDS.forEach(f => { beforeSnapshot[f] = listing[f]; });
-
+        
         // ObjectId fields that must be null instead of empty string
         const objectIdFields = ['owner', 'category_id', 'country_id', 'state_id', 'city_id', 'area_id', 'plan'];
-
-        for (const key of Object.keys(updateFields)) {
-            if (updateFields[key] === undefined) continue;
-
-            if (objectIdFields.includes(key)) {
-                // Convert empty strings / sentinels to null for ObjectId fields
-                if (!updateFields[key] || updateFields[key] === '' || updateFields[key] === 'null' || updateFields[key] === 'manual' || updateFields[key] === 'undefined') {
-                    listing[key] = null;
-                } else if (mongoose.Types.ObjectId.isValid(updateFields[key])) {
-                    listing[key] = updateFields[key];
+        
+        Object.keys(updateFields).forEach(key => {
+            if (updateFields[key] !== undefined) {
+                // Convert empty strings to null for ObjectId fields
+                if (objectIdFields.includes(key)) {
+                    if (!updateFields[key] || updateFields[key] === '' || updateFields[key] === 'null' || updateFields[key] === 'manual' || updateFields[key] === 'undefined') {
+                        listing[key] = null;
+                    } else if (mongoose.Types.ObjectId.isValid(updateFields[key])) {
+                        listing[key] = updateFields[key];
+                    }
+                    // If not valid and not empty, we leave it as is which will cause a validation error on save (handled by catch)
                 } else {
-                    return res.status(400).json({
-                        success: false,
-                        msg: `Invalid value for "${key}" — expected a valid id`
-                    });
+                    listing[key] = updateFields[key];
                 }
-            } else {
-                listing[key] = updateFields[key];
-            }
-        }
-
-        TRACKED_FIELDS.forEach(field => {
-            if (updateFields[field] !== undefined && String(listing[field]) !== String(beforeSnapshot[field])) {
-                listing.changeHistory.push({
-                    field,
-                    oldValue: beforeSnapshot[field],
-                    newValue: listing[field],
-                    changedBy: req.user._id
-                });
             }
         });
 
@@ -1033,12 +839,6 @@ exports.updateListingAdmin = async (req, res) => {
         res.json({ success: true, msg: 'Listing updated successfully', listing });
     } catch (err) {
         console.error('Update Listing Admin Error:', err);
-        if (err.name === 'ValidationError') {
-            const fieldErrors = Object.entries(err.errors || {}).map(
-                ([field, e]) => `${field}: ${e.message}`
-            );
-            return res.status(400).json({ success: false, msg: 'Validation failed', errors: fieldErrors });
-        }
         res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
     }
 };
@@ -1065,7 +865,6 @@ exports.importListings = async (req, res) => {
 
         const results = {
             successCount: 0,
-            updatedCount: 0,
             failedCount: 0,
             errors: []
         };
@@ -1090,12 +889,9 @@ exports.importListings = async (req, res) => {
                     c.name.toLowerCase() === categoryText.toLowerCase()
                 );
 
-                // 2. Substring match (e.g. database has "IT Services", input is "IT Services Group")
-                //    Guarded to >=4 chars, matching the owner-name substring match below —
-                //    a short value like "IT" would otherwise match any category merely
-                //    containing those letters (e.g. "Hospitality").
-                if (!matchedCategory && categoryText.length >= 4) {
-                    matchedCategory = categories.find(c =>
+                // 2. Substring match (e.g. database has "IT Services", input is "IT")
+                if (!matchedCategory) {
+                    matchedCategory = categories.find(c => 
                         c.name.toLowerCase().includes(categoryText.toLowerCase())
                     );
                 }
@@ -1248,23 +1044,9 @@ exports.importListings = async (req, res) => {
                     claimed: !!owner_id
                 };
 
-                // Duplicate guard: same business name in the same city is treated as the
-                // same listing, matching bulkImportController's find-or-update pattern —
-                // without this, re-running an import file creates full duplicates.
-                const duplicate = await Company.findOne({
-                    name: new RegExp(`^${escapeRegex(companyData.name)}$`, 'i'),
-                    ...(city_id ? { city_id } : {})
-                });
-
-                if (duplicate) {
-                    Object.assign(duplicate, companyData);
-                    await duplicate.save();
-                    results.updatedCount++;
-                } else {
-                    const newCompany = new Company(companyData);
-                    await newCompany.save();
-                    results.successCount++;
-                }
+                const newCompany = new Company(companyData);
+                await newCompany.save();
+                results.successCount++;
             } catch (err) {
                 results.failedCount++;
                 results.errors.push({
@@ -1280,14 +1062,14 @@ exports.importListings = async (req, res) => {
             adminId: req.user?._id,
             action: 'BULK_ACTION_EXECUTED',
             targetType: 'Listing',
-            notes: `Imported ${results.successCount} listings, updated ${results.updatedCount}, ${results.failedCount} failed`,
+            notes: `Imported ${results.successCount} listings successfully, ${results.failedCount} failed`,
             ipAddress: req.ip,
             userAgent: req.headers['user-agent']
         });
 
         res.json({
             success: true,
-            msg: `Import completed: ${results.successCount} created, ${results.updatedCount} updated, ${results.failedCount} failed`,
+            msg: `Import completed: ${results.successCount} imported successfully, ${results.failedCount} failed`,
             ...results
         });
     } catch (err) {

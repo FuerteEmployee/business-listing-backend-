@@ -10,8 +10,10 @@ const {
     deactivateAccount,
     getSessions,
     revokeAllSessions,
+    revokeSession,
     googleLogin,
-    facebookLogin
+    facebookLogin,
+    logout
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 const RBACRole = require('../models/RBACRole');
@@ -20,6 +22,7 @@ const router = express.Router();
 
 router.post('/register', register);
 router.post('/login', login);
+router.post('/logout', protect, logout);
 router.get('/me', protect, getMe);
 
 // Returns the current user's RBAC role permissions (no RBAC check needed)
@@ -51,5 +54,6 @@ router.delete('/account', protect, deleteAccount);
 router.put('/deactivate', protect, deactivateAccount);
 router.get('/sessions', protect, getSessions);
 router.delete('/sessions', protect, revokeAllSessions);
+router.delete('/sessions/:id', protect, revokeSession);
 
 module.exports = router;

@@ -97,7 +97,42 @@ const getAllCompanies = async (req, res) => {
         // 4. Pagination & Count
         const countPipeline = [...pipeline, { $count: "total" }];
         const countResult = await Company.aggregate(countPipeline);
-        const total = countResult.length > 0 ? countResult[0].total : 0;
+        let total = countResult.length > 0 ? countResult[0].total : 0;
+
+        // Fallback: If 0 results matching selected city, try searching without the city filter
+        if (total === 0 && matchQuery.city_id) {
+            const fallbackMatchQuery = { ...matchQuery };
+            delete fallbackMatchQuery.city_id;
+
+            let fallbackPipeline = [];
+            if (sort === 'distance' && lat && lng) {
+                fallbackPipeline.push({
+                    $geoNear: {
+                        near: { type: "Point", coordinates: [parseFloat(lng), parseFloat(lat)] },
+                        distanceField: "distance",
+                        spherical: true,
+                        query: fallbackMatchQuery
+                    }
+                });
+            } else {
+                fallbackPipeline.push({ $match: fallbackMatchQuery });
+                if (sort === 'latest') fallbackPipeline.push({ $sort: { createdAt: -1 } });
+                else if (sort === 'rating') fallbackPipeline.push({ $sort: { rating: -1 } });
+                else if (sort === 'reviews') fallbackPipeline.push({ $sort: { reviewCount: -1 } });
+                else {
+                    fallbackPipeline.push({ $sort: { isFeatured: -1, manualRank: -1, rating: -1 } });
+                }
+            }
+
+            const fallbackCountPipeline = [...fallbackPipeline, { $count: "total" }];
+            const fallbackCountResult = await Company.aggregate(fallbackCountPipeline);
+            const fallbackTotal = fallbackCountResult.length > 0 ? fallbackCountResult[0].total : 0;
+
+            if (fallbackTotal > 0) {
+                pipeline = fallbackPipeline;
+                total = fallbackTotal;
+            }
+        }
 
         pipeline.push({ $skip: skip });
         pipeline.push({ $limit: parsedLimit });
@@ -107,7 +142,9 @@ const getAllCompanies = async (req, res) => {
             { $lookup: { from: 'cities', localField: 'city_id', foreignField: '_id', as: 'city_id' } },
             { $unwind: { path: '$city_id', preserveNullAndEmptyArrays: true } },
             { $lookup: { from: 'areas', localField: 'area_id', foreignField: '_id', as: 'area_id' } },
-            { $unwind: { path: '$area_id', preserveNullAndEmptyArrays: true } }
+            { $unwind: { path: '$area_id', preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'categories', localField: 'category_id', foreignField: '_id', as: 'category_id' } },
+            { $unwind: { path: '$category_id', preserveNullAndEmptyArrays: true } }
         );
 
         let companies = await Company.aggregate(pipeline);
@@ -144,7 +181,8 @@ const getAllCompanies = async (req, res) => {
             );
             const photoUrls = approvedImages.map(img => (typeof img === 'object' && img !== null ? img.url : img)).filter(Boolean);
             const coverObj = approvedImages.find(img => typeof img === 'object' && img !== null && img.isCover) || approvedImages[0];
-            const coverUrl = company.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null);
+            const fallbackImage = company.category_id?.image || null;
+            const coverUrl = company.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null) || fallbackImage;
 
             return {
                 ...company,
@@ -229,6 +267,7 @@ const createCompany = async (req, res) => {
         }
 
         const populatedCompany = await Company.findById(company._id)
+            .populate('category_id', 'name slug image')
             .populate('city_id', 'name slug')
             .populate('state_id', 'name slug')
             .populate('area_id', 'name slug')
@@ -323,6 +362,7 @@ const updateCompany = async (req, res) => {
             { $set: body },
             { new: true }
         )
+        .populate('category_id', 'name slug image')
         .populate('city_id', 'name slug')
         .populate('state_id', 'name slug')
         .populate('area_id', 'name slug')
@@ -363,6 +403,7 @@ const deleteCompany = async (req, res) => {
 const getCompanyBySlug = async (req, res) => {
     try {
         let company = await Company.findOne({ slug: req.params.slug })
+            .populate('category_id', 'name slug image')
             .populate('country_id', 'name slug')
             .populate('city_id', 'name slug')
             .populate('state_id', 'name slug')
@@ -371,6 +412,7 @@ const getCompanyBySlug = async (req, res) => {
 
         if (!company) {
             company = await Company.findOne({ slug: new RegExp(`^${req.params.slug}$`, 'i') })
+                .populate('category_id', 'name slug image')
                 .populate('country_id', 'name slug')
                 .populate('city_id', 'name slug')
                 .populate('state_id', 'name slug')
@@ -409,7 +451,8 @@ const getCompanyBySlug = async (req, res) => {
             );
             const photoUrls = approvedImages.map(img => (typeof img === 'object' && img !== null ? img.url : img)).filter(Boolean);
             const coverObj = approvedImages.find(img => typeof img === 'object' && img !== null && img.isCover) || approvedImages[0];
-            const coverUrl = companyObj.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null);
+            const fallbackImage = companyObj.category_id?.image || null;
+            const coverUrl = companyObj.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null) || fallbackImage;
 
             companyObj.photos = photoUrls;
             companyObj.image = coverUrl;
@@ -447,6 +490,7 @@ const claimCompany = async (req, res) => {
         await company.save();
 
         const populatedCompany = await Company.findById(company._id)
+            .populate('category_id', 'name slug image')
             .populate('owner', 'name email role')
             .lean();
 
@@ -473,16 +517,16 @@ const autocomplete = async (req, res) => {
         const fuzzyPattern = createFuzzyRegex(q);
         const regex = new RegExp(fuzzyPattern, 'i');
         
-        // Parallel search for Categories and Companies
+        // Parallel search for Categories and Companies (include slug)
         const [categories, companyNames] = await Promise.all([
-            Category.find({ name: regex }).limit(5).select('name -_id').lean(),
-            Company.find({ name: regex }).limit(5).select('name -_id').lean()
+            Category.find({ name: regex }).limit(5).select('name slug -_id').lean(),
+            Company.find({ name: regex }).limit(5).select('name slug -_id').lean()
         ]);
 
         // Flatten and merge results
         const results = [
-            ...categories.map(c => ({ text: c.name, type: 'Category' })),
-            ...companyNames.map(c => ({ text: c.name, type: 'Business' }))
+            ...categories.map(c => ({ text: c.name, slug: c.slug, type: 'Category' })),
+            ...companyNames.map(c => ({ text: c.name, slug: c.slug, type: 'Business' }))
         ];
 
         res.json(results);
@@ -499,14 +543,22 @@ const getSimilarBusinesses = async (req, res) => {
         const company = await Company.findById(req.params.id);
         if (!company) return res.status(404).json({ msg: 'Company not found' });
 
-        const similar = await Company.find({
+        let similar = await Company.find({
             _id: { $ne: company._id },
             category_id: company.category_id,
             city_id: company.city_id
         })
+        .populate('category_id', 'name slug image')
         .sort({ rating: -1, reviewCount: -1 })
         .limit(6)
         .lean();
+
+        similar = similar.map(s => {
+            if (!s.image) {
+                s.image = s.category_id?.image || null;
+            }
+            return s;
+        });
 
         res.json(similar);
     } catch (err) {
@@ -551,11 +603,16 @@ const postQuestion = async (req, res) => {
 const getCompanyById = async (req, res) => {
     try {
         const company = await Company.findById(req.params.id)
-            .populate('category_id', 'name slug')
+            .populate('category_id', 'name slug image')
             .populate('city_id', 'name slug')
             .populate('area_id', 'name slug');
         if (!company) return res.status(404).json({ msg: 'Company not found' });
-        res.json(company);
+        
+        const companyObj = company.toObject();
+        if (!companyObj.image) {
+            companyObj.image = companyObj.category_id?.image || null;
+        }
+        res.json(companyObj);
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server Error');
@@ -597,16 +654,24 @@ const getMyCompanies = async (req, res) => {
         if (!req.user) return res.status(401).json({ msg: 'Not authorized' });
         
         const companies = await Company.find({ owner: req.user._id })
+            .populate('category_id', 'name slug image')
             .populate('city_id', 'name slug')
             .populate('state_id', 'name slug')
             .populate('area_id', 'name slug')
             .sort({ createdAt: -1 })
             .lean();
 
+        const updatedCompanies = companies.map(company => {
+            if (!company.image) {
+                company.image = company.category_id?.image || null;
+            }
+            return company;
+        });
+
         res.json({
             success: true,
-            count: companies.length,
-            data: companies
+            count: updatedCompanies.length,
+            data: updatedCompanies
         });
     } catch (err) {
         console.error('GetMyCompanies Error:', err.message);
@@ -689,6 +754,119 @@ const importOSM = async (req, res) => {
     }
 };
 
+// @desc    Get all questions for merchant's businesses
+// @route   GET /api/companies/questions/merchant
+// @access  Private (Merchant)
+const getMerchantQuestions = async (req, res) => {
+    try {
+        const Question = require('../models/Question');
+        const Company = require('../models/Company');
+
+        // Find all companies owned by this user or matching their companyId
+        const query = {
+            $or: [
+                { owner: req.user.id }
+            ]
+        };
+        if (req.user.companyId) {
+            query.$or.push({ _id: req.user.companyId });
+        }
+
+        const companies = await Company.find(query);
+        const companyIds = companies.map(c => c._id);
+
+        const questions = await Question.find({ businessId: { $in: companyIds } })
+            .populate('userId', 'name email image')
+            .populate('businessId', 'name slug')
+            .sort({ createdAt: -1 });
+
+        res.json(questions);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
+// @desc    Answer a business question (Owner)
+// @route   PUT /api/companies/questions/:id/answer
+// @access  Private (Owner)
+const answerQuestion = async (req, res) => {
+    try {
+        const { answerText } = req.body;
+        if (!answerText) return res.status(400).json({ msg: 'Answer text is required' });
+
+        const Question = require('../models/Question');
+        const Company = require('../models/Company');
+
+        const question = await Question.findById(req.params.id);
+        if (!question) return res.status(404).json({ msg: 'Question not found' });
+
+        // Verify ownership
+        const company = await Company.findById(question.businessId);
+        if (!company) return res.status(404).json({ msg: 'Company not found' });
+
+        if (company.owner.toString() !== req.user.id && req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+            return res.status(403).json({ msg: 'Not authorized to answer this question' });
+        }
+
+        question.answerText = answerText;
+        question.isAnswered = true;
+        question.answeredBy = req.user.id;
+        question.answeredAt = new Date();
+
+        await question.save();
+        res.json(question);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
+// @desc    Get all questions platform-wide (Admin)
+// @route   GET /api/companies/questions/admin
+// @access  Private (Admin)
+const getAdminQuestions = async (req, res) => {
+    try {
+        const Question = require('../models/Question');
+
+        if (req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+            return res.status(403).json({ msg: 'Not authorized' });
+        }
+
+        const questions = await Question.find()
+            .populate('userId', 'name email image')
+            .populate('businessId', 'name slug')
+            .sort({ createdAt: -1 });
+
+        res.json(questions);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
+// @desc    Delete a question (Admin)
+// @route   DELETE /api/companies/questions/:id
+// @access  Private (Admin)
+const deleteQuestion = async (req, res) => {
+    try {
+        const Question = require('../models/Question');
+
+        if (req.user.role !== 'Super Admin' && req.user.role !== 'Admin') {
+            return res.status(403).json({ msg: 'Not authorized' });
+        }
+
+        const question = await Question.findById(req.params.id);
+        if (!question) return res.status(404).json({ msg: 'Question not found' });
+
+        await question.deleteOne();
+        res.json({ msg: 'Question successfully deleted' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
 module.exports = { 
     getAllCompanies, 
     createCompany, 
@@ -703,5 +881,9 @@ module.exports = {
     getQuestions,
     postQuestion,
     reportCompany,
-    importOSM
+    importOSM,
+    getMerchantQuestions,
+    answerQuestion,
+    getAdminQuestions,
+    deleteQuestion
 };
