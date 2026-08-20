@@ -106,6 +106,8 @@ const getAllCompanies = async (req, res) => {
             if (sort === 'latest') pipeline.push({ $sort: { createdAt: -1 } });
             else if (sort === 'rating') pipeline.push({ $sort: { rating: -1 } });
             else if (sort === 'reviews') pipeline.push({ $sort: { reviewCount: -1 } });
+            else if (sort === 'price_asc') pipeline.push({ $sort: { priceRange: 1, rating: -1 } });
+            else if (sort === 'price_desc') pipeline.push({ $sort: { priceRange: -1, rating: -1 } });
             else {
                 // Default Ranking (Premium First, then manualRank, then rating)
                 pipeline.push({ $sort: { isFeatured: -1, manualRank: -1, rating: -1 } });
@@ -137,6 +139,8 @@ const getAllCompanies = async (req, res) => {
                 if (sort === 'latest') fallbackPipeline.push({ $sort: { createdAt: -1 } });
                 else if (sort === 'rating') fallbackPipeline.push({ $sort: { rating: -1 } });
                 else if (sort === 'reviews') fallbackPipeline.push({ $sort: { reviewCount: -1 } });
+                else if (sort === 'price_asc') fallbackPipeline.push({ $sort: { priceRange: 1, rating: -1 } });
+                else if (sort === 'price_desc') fallbackPipeline.push({ $sort: { priceRange: -1, rating: -1 } });
                 else {
                     fallbackPipeline.push({ $sort: { isFeatured: -1, manualRank: -1, rating: -1 } });
                 }
