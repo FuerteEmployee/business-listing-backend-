@@ -152,6 +152,11 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Company'
     }],
+    // Saved/Bookmarked Products
+    savedProducts: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Product'
+    }],
     // Address Book
     addressBook: [{
         label: { type: String, default: 'Home' },

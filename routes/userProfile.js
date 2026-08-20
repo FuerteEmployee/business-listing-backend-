@@ -8,7 +8,9 @@ const {
     manageAddressBook,
     requestProfileChange,
     verifyProfileChange,
-    updateFcmToken
+    updateFcmToken,
+    getSavedProducts,
+    toggleSaveProduct
 } = require('../controllers/userProfileController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -21,6 +23,8 @@ router.post('/verify-change', verifyProfileChange);
 router.put('/fcm-token', updateFcmToken);
 router.get('/saved', getSavedListings);
 router.post('/saved/toggle', toggleSaveListing);
+router.get('/saved-products', getSavedProducts);
+router.post('/saved-products/toggle', toggleSaveProduct);
 router.post('/addresses', manageAddressBook);
 
 module.exports = router;

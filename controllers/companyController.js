@@ -57,6 +57,24 @@ const getAllCompanies = async (req, res) => {
         if (priceRange) matchQuery.priceRange = priceRange;
         if (rating) matchQuery.rating = { $gte: parseFloat(rating) };
 
+        // Open Now filter
+        if (openNow === 'true') {
+            const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            const now = new Date();
+            const currentDay = days[now.getDay()];
+            const currentHH = String(now.getHours()).padStart(2, '0');
+            const currentMM = String(now.getMinutes()).padStart(2, '0');
+            const currentTimeString = `${currentHH}:${currentMM}`;
+
+            const dayOpenKey = `businessHours.${currentDay}.open`;
+            const dayCloseKey = `businessHours.${currentDay}.close`;
+            const dayClosedKey = `businessHours.${currentDay}.closed`;
+
+            matchQuery[dayClosedKey] = { $ne: true };
+            matchQuery[dayOpenKey] = { $lte: currentTimeString };
+            matchQuery[dayCloseKey] = { $gte: currentTimeString };
+        }
+
         // 2. Search Query (Text search with fuzzy matching)
         if (q) {
             const fuzzyPattern = createFuzzyRegex(q);

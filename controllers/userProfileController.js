@@ -216,3 +216,50 @@ exports.updateFcmToken = async (req, res) => {
         res.status(500).json({ msg: 'Server Error' });
     }
 };
+
+// @desc    Get saved products
+// @route   GET /api/me/saved-products
+// @access  Private
+exports.getSavedProducts = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).populate({
+            path: 'savedProducts',
+            populate: [
+                { path: 'listingId', select: 'name image slug city_id' },
+                { path: 'brandId', select: 'name' }
+            ]
+        });
+        res.json({ success: true, data: user.savedProducts || [] });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
+// @desc    Toggle saved product
+// @route   POST /api/me/saved-products/toggle
+// @access  Private
+exports.toggleSaveProduct = async (req, res) => {
+    try {
+        const { productId } = req.body;
+        const user = await User.findById(req.user.id);
+        
+        if (!user.savedProducts) {
+            user.savedProducts = [];
+        }
+        
+        const index = user.savedProducts.indexOf(productId);
+        if (index > -1) {
+            user.savedProducts.splice(index, 1);
+            await user.save();
+            return res.json({ success: true, msg: 'Removed from saved products', saved: false });
+        } else {
+            user.savedProducts.push(productId);
+            await user.save();
+            return res.json({ success: true, msg: 'Product saved successfully', saved: true });
+        }
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ msg: 'Server Error' });
+    }
+};

@@ -13,6 +13,8 @@ const productSchema = new mongoose.Schema({
     slug: { type: String, required: true, unique: true },
     description: { type: String },
     shortDescription: { type: String },
+    highlights: { type: String },
+    warranty: { type: String },
     
     // Core Architecture Tie-in
     listingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
