@@ -101,7 +101,9 @@ exports.getProductBySlug = async (req, res) => {
             // city_id needs its own populate or the city renders as a bare ObjectId.
             .populate({
                 path: 'listingId',
-                select: 'name slug phone email image address city_id state_id area_id rating reviewCount',
+                // logo is the seller's brand mark and is often set when image is not,
+                // so the product page needs both to render the seller avatar.
+                select: 'name slug phone email image logo address city_id state_id area_id rating reviewCount',
                 populate: { path: 'city_id', select: 'name' }
             })
             .populate('categoryId', 'name')
