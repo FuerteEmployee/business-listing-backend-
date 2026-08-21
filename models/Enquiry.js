@@ -41,7 +41,7 @@ const enquirySchema = new mongoose.Schema({
     // Source of enquiry
     source: {
         type: String,
-        enum: ['Search', 'CategoryBrowse', 'Direct', 'Ad', 'Phone', 'Other', 'Business Detail', 'Search Results'],
+        enum: ['Search', 'CategoryBrowse', 'Direct', 'Ad', 'Phone', 'Other', 'Business Detail', 'Search Results', 'Product Detail'],
         default: 'Search'
     },
     // Merchant responses

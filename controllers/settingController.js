@@ -1,6 +1,9 @@
 const Setting = require('../models/Setting');
 const SystemConfig = require('../models/SystemConfig');
 
+// Settings that must never reach an unauthenticated caller. See getSettings.
+const ADMIN_ONLY_SETTING_FIELDS = ['rankingWeights', 'hiddenFeatures', '__v'];
+
 const sanitizeDiscoveryChips = (chips) => {
     if (!Array.isArray(chips)) return [];
     const clean = chips.filter(chip => chip && typeof chip.slug === 'string');
@@ -72,6 +75,14 @@ exports.getSettings = async (req, res) => {
             if (!cleanedChips.length) {
                 safeSettings.homepage.showDiscovery = false;
             }
+        }
+
+        // rankingWeights tells anyone how to game search placement (and that paying
+        // buys a 1.5x multiplier); hiddenFeatures enumerates the admin surface.
+        // Neither is needed to render the public site, so only Super Admins see them.
+        // Mounted with optionalAuth, so req.user is set when a valid token is sent.
+        if (req.user?.role !== 'Super Admin') {
+            ADMIN_ONLY_SETTING_FIELDS.forEach(field => delete safeSettings[field]);
         }
 
         res.status(200).json({ success: true, data: safeSettings });

@@ -8,12 +8,20 @@ const productVariantSchema = new mongoose.Schema({
     sku: { type: String, required: true }
 });
 
+// Free-form spec parameters (Power, Capacity, Application, Frequency, Dimensions, ...).
+// Manufacturer-defined: no fixed key list, nothing defaulted.
+const productSpecificationSchema = new mongoose.Schema({
+    key: { type: String, trim: true },
+    value: { type: String, trim: true }
+}, { _id: false });
+
 const productSchema = new mongoose.Schema({
     name: { type: String, required: true },
     slug: { type: String, required: true, unique: true },
     description: { type: String },
     shortDescription: { type: String },
     highlights: { type: String },
+    specifications: [productSpecificationSchema],
     warranty: { type: String },
     
     // Core Architecture Tie-in
