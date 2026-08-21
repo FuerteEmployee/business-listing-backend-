@@ -10,12 +10,45 @@ const slugify = require('slugify');
 const { isBrandScoped } = require('../middleware/authMiddleware');
 const { resolveManualLocation } = require('../utils/resolveManualLocation');
 
+// Escape special regex characters to prevent regex injection.
+const escapeRegex = (str) => String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Helper to create a basic fuzzy regex (e.g. "pilo" -> "p.*i.*l.*o")
 const createFuzzyRegex = (str) => {
     if (!str) return '';
-    // Escape special regex characters first to prevent regex injection
-    const escaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return escaped.split('').join('.*');
+    return escapeRegex(str).split('').join('.*');
+};
+
+// --- Pagination guards -----------------------------------------------------
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 50;   // the list response carries phone/email, so cap it
+const MAX_PAGE = 5000;
+
+// Coerce to a safe integer inside [min, max]; anything unparseable becomes the
+// fallback. Never let a user-supplied value reach $skip / $limit unchecked.
+const clampInt = (value, fallback, min, max) => {
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(Math.max(n, min), max);
+};
+
+// --- Autocomplete relevance ------------------------------------------------
+const AUTOCOMPLETE_LIMIT = 10;        // rows returned to the client
+const AUTOCOMPLETE_FETCH_LIMIT = 10;  // rows pulled per collection per tier
+const AUTOCOMPLETE_MAX_FUZZY = 3;     // cap on subsequence-only matches
+
+// Lower rank = better match. Tiers: exact, prefix, whole word, substring, fuzzy.
+const matchRank = (name, term) => {
+    const haystack = String(name || '').toLowerCase();
+    const needle = String(term || '').toLowerCase();
+    if (!needle) return 4;
+
+    if (haystack === needle) return 0;
+    if (haystack.startsWith(needle)) return 1;
+    // Whole-word hit, e.g. "cnc" in "Precision CNC Works".
+    if (new RegExp(`\\b${escapeRegex(needle)}\\b`, 'i').test(haystack)) return 2;
+    if (haystack.includes(needle)) return 3;
+    return 4; // matched only as a fuzzy subsequence
 };
 
 // @desc    Get all companies
@@ -28,9 +61,14 @@ const getAllCompanies = async (req, res) => {
             rating, priceRange, openNow, lat, lng, owned
         } = req.query;
         
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        const parsedLimit = parseInt(limit);
-        
+        // Clamp before these reach the aggregation pipeline. Unvalidated values
+        // used to be passed straight through, so ?limit=-1 / ?page=-1 / ?limit=abc
+        // produced a 500 that echoed the raw Mongo driver error, and
+        // ?limit=100000 dumped the whole contact database in one request.
+        const parsedLimit = clampInt(limit, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
+        const parsedPage = clampInt(page, 1, 1, MAX_PAGE);
+        const skip = (parsedPage - 1) * parsedLimit;
+
         let matchQuery = {};
         
         // 0. Enforce Approved/Active status for public listings
@@ -219,14 +257,16 @@ const getAllCompanies = async (req, res) => {
             data: companies,
             pagination: {
                 total,
-                page: parseInt(page),
-                limit: parseInt(limit),
-                pages: Math.ceil(total / parseInt(limit))
+                page: parsedPage,
+                limit: parsedLimit,
+                pages: Math.ceil(total / parsedLimit)
             }
         });
     } catch (err) {
-        console.error('GetAllCompanies Error:', err.message);
-        res.status(500).json({ msg: 'Server Error', error: err.message });
+        // Log the detail, return none of it — driver messages exposed pipeline
+        // internals ("$skip: nan.0") to any caller passing junk params.
+        console.error('GetAllCompanies Error:', err);
+        res.status(500).json({ msg: 'Server Error' });
     }
 };
 
@@ -535,23 +575,53 @@ const autocomplete = async (req, res) => {
         const { q } = req.query;
         if (!q || q.length < 2) return res.json([]);
 
-        // Use fuzzy matching for better typo tolerance
-        const fuzzyPattern = createFuzzyRegex(q);
-        const regex = new RegExp(fuzzyPattern, 'i');
-        
-        // Parallel search for Categories and Companies (include slug)
-        const [categories, companyNames] = await Promise.all([
-            Category.find({ name: regex }).limit(5).select('name slug -_id').lean(),
-            Company.find({ name: regex }).limit(5).select('name slug -_id').lean()
+        const term = q.trim();
+        const escaped = escapeRegex(term);
+        // Literal substring match — the tier that actually matters. Fuzzy
+        // (subsequence) matching is only a fallback, because "cnc" fuzzily
+        // matches "pa-c-kagi-n-g a-c-cessories" and used to outrank
+        // "Precision CNC Works".
+        const substring = new RegExp(escaped, 'i');
+
+        const [categories, companies] = await Promise.all([
+            Category.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
+            Company.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean()
         ]);
 
-        // Flatten and merge results
-        const results = [
+        let results = [
             ...categories.map(c => ({ text: c.name, slug: c.slug, type: 'Category' })),
-            ...companyNames.map(c => ({ text: c.name, slug: c.slug, type: 'Business' }))
+            ...companies.map(c => ({ text: c.name, slug: c.slug, type: 'Business' }))
         ];
 
-        res.json(results);
+        // Only reach for fuzzy when literal matching came up short, so typo
+        // tolerance is preserved without polluting good result sets.
+        if (results.length < AUTOCOMPLETE_LIMIT) {
+            const fuzzy = new RegExp(createFuzzyRegex(term), 'i');
+            const seen = new Set(results.map(r => `${r.type}:${r.text}`));
+
+            const [fuzzyCategories, fuzzyCompanies] = await Promise.all([
+                Category.find({ name: fuzzy }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
+                Company.find({ name: fuzzy }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean()
+            ]);
+
+            const extra = [
+                ...fuzzyCategories.map(c => ({ text: c.name, slug: c.slug, type: 'Category' })),
+                ...fuzzyCompanies.map(c => ({ text: c.name, slug: c.slug, type: 'Business' }))
+            ].filter(r => !seen.has(`${r.type}:${r.text}`));
+
+            results = results.concat(extra.slice(0, AUTOCOMPLETE_MAX_FUZZY));
+        }
+
+        results.sort((a, b) => {
+            const rankDiff = matchRank(a.text, term) - matchRank(b.text, term);
+            if (rankDiff !== 0) return rankDiff;
+            // Within a tier, the shorter name is the closer match
+            // ("CNC Machine" before "Precision CNC Works Pvt Ltd").
+            if (a.text.length !== b.text.length) return a.text.length - b.text.length;
+            return a.text.localeCompare(b.text);
+        });
+
+        res.json(results.slice(0, AUTOCOMPLETE_LIMIT));
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ msg: 'Server Error' });
