@@ -97,7 +97,13 @@ exports.getProduct = async (req, res) => {
 exports.getProductBySlug = async (req, res) => {
     try {
         const product = await Product.findOne({ slug: req.params.slug, status: 'Active' })
-            .populate('listingId', 'name slug phone email image address city_id state_id area_id')
+            // rating/reviewCount drive the seller rating shown on the product page, and
+            // city_id needs its own populate or the city renders as a bare ObjectId.
+            .populate({
+                path: 'listingId',
+                select: 'name slug phone email image address city_id state_id area_id rating reviewCount',
+                populate: { path: 'city_id', select: 'name' }
+            })
             .populate('categoryId', 'name')
             .populate('subCategoryId', 'name')
             .populate('brandId', 'name');
@@ -113,7 +119,7 @@ exports.getProductBySlug = async (req, res) => {
             status: 'Active'
         })
         .limit(6)
-        .populate('listingId', 'name slug')
+        .populate('listingId', 'name slug rating reviewCount')
         .select('name slug price images description');
 
         res.status(200).json({ 
