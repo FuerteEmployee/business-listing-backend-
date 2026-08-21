@@ -41,6 +41,17 @@ const productSchema = new mongoose.Schema({
     videoUrl: { type: String },
     
     variants: [productVariantSchema],
+    specifications: [
+        {
+            title: { type: String, required: true },
+            items: [
+                {
+                    key: { type: String, required: true },
+                    value: { type: String, required: true }
+                }
+            ]
+        }
+    ],
     
     status: { type: String, enum: ['Draft', 'Active', 'Archived'], default: 'Draft' },
     featured: { type: Boolean, default: false },

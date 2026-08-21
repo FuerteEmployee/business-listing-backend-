@@ -134,7 +134,7 @@ exports.createEnquiry = async (req, res) => {
                 agreedToPrivacy: true,
                 source: req.body.source || 'Business Enquiry',
                 assignedTo: business.owner || null,
-                assignedToName: business.owner ? 'Merchant Owner' : 'Unassigned',
+                assignedToName: business.owner ? 'Brand Owner' : 'Unassigned',
                 message: message
             });
             await newLead.save();

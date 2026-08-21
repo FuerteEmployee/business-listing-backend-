@@ -46,7 +46,7 @@ const computeLeadScore = (lead) => {
 // Create a new lead (enquiry)
 exports.createLead = async (req, res) => {
     try {
-        const { name, phone, category, type, businessId, agreedToPrivacy, source } = req.body;
+        const { name, phone, email, message, category, type, businessId, agreedToPrivacy, source } = req.body;
         if (!name || !phone) {
             return res.status(400).json({ success: false, message: 'Name and phone are required.' });
         }
@@ -69,6 +69,8 @@ exports.createLead = async (req, res) => {
         const lead = new Lead({
             name,
             phone,
+            email,
+            message,
             category,
             type,
             business: businessId || null,
