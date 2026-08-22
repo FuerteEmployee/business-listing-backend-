@@ -34,11 +34,11 @@ exports.updateProfile = async (req, res) => {
         const { name, profilePhoto, location, notificationPreferences, privacySettings } = req.body;
         
         const fieldsToUpdate = {};
-        if (name) fieldsToUpdate.name = name;
-        if (profilePhoto) fieldsToUpdate.profilePhoto = profilePhoto;
-        if (location) fieldsToUpdate.location = location;
-        if (notificationPreferences) fieldsToUpdate.notificationPreferences = notificationPreferences;
-        if (privacySettings) fieldsToUpdate.privacySettings = privacySettings;
+        if (name !== undefined) fieldsToUpdate.name = name;
+        if (profilePhoto !== undefined) fieldsToUpdate.profilePhoto = profilePhoto;
+        if (location !== undefined) fieldsToUpdate.location = location;
+        if (notificationPreferences !== undefined) fieldsToUpdate.notificationPreferences = notificationPreferences;
+        if (privacySettings !== undefined) fieldsToUpdate.privacySettings = privacySettings;
 
         const user = await User.findByIdAndUpdate(
             req.user.id,
