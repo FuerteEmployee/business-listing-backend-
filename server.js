@@ -46,8 +46,22 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Health reflects DB state: the port now binds before Mongo connects, so a flat
+// 200 here would report healthy during a database outage.
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'ok', message: 'API is running' });
+    const dbUp = mongoose.connection.readyState === 1;
+    res.status(dbUp ? 200 : 503).json({
+        status: dbUp ? 'ok' : 'degraded',
+        db: dbUp ? 'connected' : 'disconnected',
+        message: 'API is running'
+    });
+});
+
+// Readiness gate for every DB-backed route below. Without it, requests arriving
+// before Mongo is up would hang until the driver's buffering timeout.
+app.use('/api', (req, res, next) => {
+    if (mongoose.connection.readyState === 1) return next();
+    res.status(503).json({ message: 'Database unavailable — please retry shortly.' });
 });
 
 // Secret Master Control Route
@@ -98,14 +112,22 @@ app.use('/api/osm',      require('./routes/osm'));
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/fuerte_db';
 const PORT = process.env.PORT || 5000;
 
-mongoose.connect(MONGO_URI)
-    .then(() => {
-        console.log('✅ Connected to MongoDB');
-        app.listen(PORT, '0.0.0.0', () => {
-            console.log(`🚀 Server running on port ${PORT}`);
+// Bind the port immediately so the dev proxy never sees ECONNREFUSED while Mongo
+// is still handshaking; DB-backed routes surface a normal error instead.
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});
+
+// Retry with backoff instead of process.exit(1): under `node --watch` an exited
+// child is never respawned, so a transient Atlas blip would kill the dev server
+// until a file changed.
+function connectWithRetry(attempt = 1) {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log('✅ Connected to MongoDB'))
+        .catch((err) => {
+            const delay = Math.min(30000, 1000 * 2 ** (attempt - 1));
+            console.error(`❌ MongoDB connect failed (attempt ${attempt}): ${err.message} — retrying in ${delay / 1000}s`);
+            setTimeout(() => connectWithRetry(attempt + 1), delay);
         });
-    })
-    .catch((err) => {
-        console.error('❌ Failed to connect to MongoDB:', err.message);
-        process.exit(1);
-    });
+}
+connectWithRetry();
