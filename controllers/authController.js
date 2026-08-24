@@ -21,7 +21,14 @@ exports.register = async (req, res) => {
 
         let user = await User.findOne({ email });
         if (user) {
-            return res.status(400).json({ msg: 'User already exists' });
+            return res.status(400).json({ msg: 'Email is already registered' });
+        }
+
+        if (mobileNumber) {
+            let phoneUser = await User.findOne({ mobileNumber });
+            if (phoneUser) {
+                return res.status(400).json({ msg: 'Mobile number is already registered' });
+            }
         }
 
         // Hash password
