@@ -61,13 +61,25 @@ const adminAuditLogSchema = new mongoose.Schema({
             'PHOTO_BULK_APPROVED',
             'PHOTO_BULK_REJECTED',
             'USER_LOGIN',
-            'USER_LOGOUT'
+            'USER_LOGOUT',
+            'PRODUCT_CREATED',
+            'PRODUCT_UPDATED',
+            'PRODUCT_DELETED',
+            'REVIEW_CREATED',
+            'REVIEW_REPLIED',
+            'LEAD_SENT',
+            'LEAD_RECEIVED',
+            'CLAIM_SUBMITTED',
+            'CLAIM_STATUS_UPDATED',
+            'USER_PASSWORD_CHANGED',
+            'USER_PROFILE_UPDATED',
+            'LEAD_REPLIED'
         ]
     },
     // What was affected
     targetType: {
         type: String,
-        enum: ['User', 'Listing', 'Review', 'Role', 'AdminUser', 'System', 'Plan', 'Subscription', 'Coupon', 'Refund', 'Invoice', 'Transaction', 'Payout', 'Broadcast']
+        enum: ['User', 'Listing', 'Review', 'Role', 'AdminUser', 'System', 'Plan', 'Subscription', 'Coupon', 'Refund', 'Invoice', 'Transaction', 'Payout', 'Broadcast', 'Product']
     },
     targetId: mongoose.Schema.Types.ObjectId,
     // Changes detail

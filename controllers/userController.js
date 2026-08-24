@@ -55,11 +55,59 @@ const updateUser = async (req, res) => {
             updateData.password = await bcrypt.hash(updateData.password, salt);
         }
 
+        const originalUser = {
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            status: user.status
+        };
+
         user = await User.findByIdAndUpdate(
             req.params.id,
             { $set: updateData },
             { new: true }
         );
+
+        // Log to AdminAuditLog if password or profile changed
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            if (updateData.password) {
+                await AdminAuditLog.create({
+                    adminId: req.user.id,
+                    action: 'USER_PASSWORD_CHANGED',
+                    targetType: 'User',
+                    targetId: user._id,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    notes: `Admin changed password for user ${user.name}`
+                });
+            }
+            // Log user profile update if fields changed
+            const fieldChanged = [];
+            ['email', 'name', 'role', 'status'].forEach(f => {
+                if (updateData[f] !== undefined && String(updateData[f]) !== String(originalUser[f])) {
+                    fieldChanged.push(f);
+                }
+            });
+            if (fieldChanged.length > 0) {
+                await AdminAuditLog.create({
+                    adminId: req.user.id,
+                    action: 'USER_PROFILE_UPDATED',
+                    targetType: 'User',
+                    targetId: user._id,
+                    changes: {
+                        before: fieldChanged.reduce((acc, f) => ({ ...acc, [f]: originalUser[f] }), {}),
+                        after: fieldChanged.reduce((acc, f) => ({ ...acc, [f]: updateData[f] }), {}),
+                        fieldChanged
+                    },
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    notes: `Admin updated fields [${fieldChanged.join(', ')}] for user ${user.name}`
+                });
+            }
+        } catch (auditErr) {
+            console.error('Failed to log admin user update audit:', auditErr.message);
+        }
 
         res.json(user);
     } catch (err) {

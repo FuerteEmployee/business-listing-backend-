@@ -170,6 +170,22 @@ exports.createProduct = async (req, res) => {
 
         const product = await Product.create(req.body);
 
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user.id,
+                action: 'PRODUCT_CREATED',
+                targetType: 'Product',
+                targetId: product._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `${req.user.name} created product '${product.name}'`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log product creation audit:', auditErr.message);
+        }
+
         res.status(201).json({
             success: true,
             data: product
@@ -218,6 +234,36 @@ exports.updateProduct = async (req, res) => {
             req.body.companyId = req.body.listingId;
         }
 
+        // Capture changes for audit log
+        try {
+            const trackFields = ['name', 'description', 'price', 'images', 'status'];
+            const before = {};
+            const after = {};
+            const fieldChanged = [];
+            trackFields.forEach(field => {
+                if (req.body[field] !== undefined && String(req.body[field]) !== String(product[field])) {
+                    before[field] = product[field];
+                    after[field] = req.body[field];
+                    fieldChanged.push(field);
+                }
+            });
+            if (fieldChanged.length > 0) {
+                const AdminAuditLog = require('../models/AdminAuditLog');
+                await AdminAuditLog.create({
+                    adminId: req.user.id,
+                    action: 'PRODUCT_UPDATED',
+                    targetType: 'Product',
+                    targetId: product._id,
+                    changes: { before, after, fieldChanged },
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    notes: `${req.user.name} updated product '${product.name}'`
+                });
+            }
+        } catch (auditErr) {
+            console.error('Failed to log product update audit:', auditErr.message);
+        }
+
         product = await Product.findByIdAndUpdate(req.params.id, req.body, {
             new: true,
             runValidators: true
@@ -244,6 +290,22 @@ exports.deleteProduct = async (req, res) => {
         // Authorization check for brand owners
         if (isBrandScoped(req.user) && !ownsBrand(req, product.listingId)) {
             return res.status(403).json({ success: false, error: 'Not authorized to delete this product' });
+        }
+
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user.id,
+                action: 'PRODUCT_DELETED',
+                targetType: 'Product',
+                targetId: product._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `${req.user.name} deleted product '${product.name}'`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log product delete audit:', auditErr.message);
         }
 
         await Product.findByIdAndDelete(req.params.id);

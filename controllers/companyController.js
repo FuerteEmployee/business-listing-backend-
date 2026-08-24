@@ -318,6 +318,22 @@ const createCompany = async (req, res) => {
         const company = new Company(body);
         await company.save();
 
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user?._id || company.owner || company._id,
+                action: 'LISTING_CREATED',
+                targetType: 'Listing',
+                targetId: company._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `Listing '${company.name}' created`
+            });
+        } catch (auditErr) {
+            console.error('Failed to write company creation audit log:', auditErr.message);
+        }
+
         if (fraudResult.isSuspicious) {
             // Create the fraud alert linked to the new company
             await FraudAlert.create({
@@ -417,6 +433,35 @@ const updateCompany = async (req, res) => {
             await Company.findByIdAndUpdate(req.params.id, {
                 $push: { changeHistory: { $each: changes } }
             });
+
+            // Log to AdminAuditLog
+            try {
+                const AdminAuditLog = require('../models/AdminAuditLog');
+                const beforeChanges = {};
+                const afterChanges = {};
+                const fieldChanged = [];
+                changes.forEach(change => {
+                    beforeChanges[change.field] = change.oldValue;
+                    afterChanges[change.field] = change.newValue;
+                    fieldChanged.push(change.field);
+                });
+                await AdminAuditLog.create({
+                    adminId: req.user._id,
+                    action: 'LISTING_EDITED',
+                    targetType: 'Listing',
+                    targetId: company._id,
+                    changes: {
+                        before: beforeChanges,
+                        after: afterChanges,
+                        fieldChanged
+                    },
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    notes: `Merchant ${req.user.name} updated listing '${company.name}'`
+                });
+            } catch (auditErr) {
+                console.error('Failed to write company update audit log:', auditErr.message);
+            }
         }
 
         company = await Company.findByIdAndUpdate(

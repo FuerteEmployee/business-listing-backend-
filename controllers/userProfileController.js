@@ -46,6 +46,35 @@ exports.updateProfile = async (req, res) => {
             { new: true, runValidators: true }
         );
 
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            const changes = {
+                before: {},
+                after: {},
+                fieldChanged: []
+            };
+            Object.keys(fieldsToUpdate).forEach(key => {
+                changes.before[key] = req.user[key];
+                changes.after[key] = fieldsToUpdate[key];
+                changes.fieldChanged.push(key);
+            });
+            if (changes.fieldChanged.length > 0) {
+                await AdminAuditLog.create({
+                    adminId: req.user.id,
+                    action: 'USER_PROFILE_UPDATED',
+                    targetType: 'User',
+                    targetId: req.user.id,
+                    changes,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    notes: `${req.user.name} updated their profile settings`
+                });
+            }
+        } catch (auditErr) {
+            console.error('Failed to log profile update audit:', auditErr.message);
+        }
+
         res.json({ success: true, data: user });
     } catch (err) {
         console.error(err.message);

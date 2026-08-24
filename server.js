@@ -10,6 +10,7 @@ require('dotenv').config();
 const { initReportScheduler } = require('./utils/reportScheduler');
 const { injectSystemConfig } = require('./middleware/configMiddleware');
 const app = express();
+app.set('trust proxy', true);
 
 // Initialize internal schedulers
 initReportScheduler();
@@ -45,6 +46,29 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Middleware to resolve real client IP addressing (X-Forwarded-For, X-Real-IP)
+app.use((req, res, next) => {
+    const rawIp = req.headers['x-forwarded-for']?.split(',')[0].trim() ||
+                  req.headers['x-real-ip'] ||
+                  req.ip ||
+                  req.connection?.remoteAddress ||
+                  req.socket?.remoteAddress;
+    
+    if (rawIp === '::1' || rawIp === '::ffff:127.0.0.1') {
+        req.clientIp = '127.0.0.1';
+    } else {
+        req.clientIp = rawIp;
+    }
+    
+    Object.defineProperty(req, 'ip', {
+        value: req.clientIp,
+        writable: true,
+        configurable: true
+    });
+    
+    next();
+});
 
 // Health reflects DB state: the port now binds before Mongo connects, so a flat
 // 200 here would report healthy during a database outage.

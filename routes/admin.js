@@ -18,7 +18,8 @@ const {
     createAdminUser,
     updateAdminUser,
     createUser,
-    updateUser
+    updateUser,
+    getUserActivityTimeline
 } = require('../controllers/adminUserController');
 const ipWhitelist = require('../middleware/ipWhitelistMiddleware');
 const {
@@ -89,6 +90,7 @@ router.post('/users/standard', checkPermission('userManagement', 'write'), creat
 router.put('/users/standard/:id', checkPermission('userManagement', 'write'), updateUser);
 router.post('/users', checkPermission('adminManagement', 'write'), createAdminUser);
 router.get('/users/:id', checkPermission('userManagement', 'read'), getUserDetailAdmin);
+router.get('/users/:id/activity', checkPermission('userManagement', 'read'), getUserActivityTimeline);
 router.put('/users/:id', checkPermission('adminManagement', 'write'), updateAdminUser);
 router.put('/users/:id/verify', checkPermission('userManagement', 'write'), verifyUser);
 router.put('/users/:id/ban', checkPermission('userManagement', 'write'), banUser);

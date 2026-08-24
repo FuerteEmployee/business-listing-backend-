@@ -272,6 +272,22 @@ exports.resetPassword = async (req, res) => {
 
         await user.save();
 
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: user._id,
+                action: 'USER_PASSWORD_CHANGED',
+                targetType: 'User',
+                targetId: user._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `${user.name} reset their password via token`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log reset password audit:', auditErr.message);
+        }
+
         res.json({ success: true, msg: 'Password updated successfully' });
     } catch (err) {
         console.error(err.message);

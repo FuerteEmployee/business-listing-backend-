@@ -42,6 +42,22 @@ const createClaimRequest = async (req, res) => {
 
         await newRequest.save();
 
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user._id,
+                action: 'CLAIM_SUBMITTED',
+                targetType: 'Listing',
+                targetId: company._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `${req.user.name} submitted ownership claim for listing '${company.name}'`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log claim submission audit:', auditErr.message);
+        }
+
         // Mark company as having a pending claim
         company.isClaimPending = true;
         await company.save();
@@ -124,6 +140,27 @@ const updateClaimStatus = async (req, res) => {
         }
 
         await claimRequest.save();
+
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user._id,
+                action: 'CLAIM_STATUS_UPDATED',
+                targetType: 'User',
+                targetId: claimRequest.userId,
+                changes: {
+                    before: { status: 'Pending' },
+                    after: { status: claimRequest.status },
+                    fieldChanged: ['status']
+                },
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `Admin processed claim for company ${claimRequest.companyId} - Result: ${status}`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log claim status update audit:', auditErr.message);
+        }
 
         res.json({
             success: true,

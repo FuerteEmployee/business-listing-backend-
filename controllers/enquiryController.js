@@ -80,6 +80,44 @@ exports.createEnquiry = async (req, res) => {
 
         await enquiry.save();
 
+        // Log to AdminAuditLog (LEAD_SENT)
+        if (req.user) {
+            try {
+                const AdminAuditLog = require('../models/AdminAuditLog');
+                await AdminAuditLog.create({
+                    adminId: req.user._id,
+                    action: 'LEAD_SENT',
+                    targetType: 'User',
+                    targetId: req.user._id,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    notes: `${req.user.name} sent enquiry reference #${enquiry._id.toString().slice(-6).toUpperCase()}`
+                });
+            } catch (auditErr) {
+                console.error('Failed to log lead sent audit:', auditErr.message);
+            }
+        }
+
+        // Log to AdminAuditLog (LEAD_RECEIVED)
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            for (const biz of businesses) {
+                if (biz.owner) {
+                    await AdminAuditLog.create({
+                        adminId: biz.owner,
+                        action: 'LEAD_RECEIVED',
+                        targetType: 'Listing',
+                        targetId: biz._id,
+                        ipAddress: req.ip,
+                        userAgent: req.headers['user-agent'],
+                        notes: `Enquiry received for listing '${biz.name}' from ${name}`
+                    });
+                }
+            }
+        } catch (auditErr) {
+            console.error('Failed to log lead received audit:', auditErr.message);
+        }
+
         // Populate for response
         await enquiry.populate('businessIds', 'name email phone');
 
@@ -402,6 +440,23 @@ exports.replyToEnquiry = async (req, res) => {
         enquiry.status = 'Responded';
 
         await enquiry.save();
+
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user._id,
+                action: 'LEAD_REPLIED',
+                targetType: 'Listing',
+                targetId: business._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `Merchant ${req.user.name} replied to enquiry reference #${enquiry._id.toString().slice(-6).toUpperCase()} for listing '${business.name}'`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log lead reply audit:', auditErr.message);
+        }
+
         await enquiry.populate('responses.businessId', 'name');
 
         // Notify User about the reply

@@ -88,6 +88,22 @@ exports.addReview = async (req, res) => {
 
         await review.save();
 
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user.id,
+                action: 'REVIEW_CREATED',
+                targetType: 'Review',
+                targetId: review._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `${req.user.name} submitted review on listing '${company.name}'`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log review creation audit:', auditErr.message);
+        }
+
         if (fraudResult.isSuspicious) {
             // Create the fraud alert linked to the new review
             await FraudAlert.create({
@@ -466,6 +482,22 @@ exports.replyToReview = async (req, res) => {
         };
 
         await review.save();
+
+        // Log to AdminAuditLog
+        try {
+            const AdminAuditLog = require('../models/AdminAuditLog');
+            await AdminAuditLog.create({
+                adminId: req.user.id,
+                action: 'REVIEW_REPLIED',
+                targetType: 'Review',
+                targetId: review._id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'],
+                notes: `Merchant ${req.user.name} replied to review on '${review.businessId.name}'`
+            });
+        } catch (auditErr) {
+            console.error('Failed to log review reply audit:', auditErr.message);
+        }
 
         // Populate userId for consistent frontend rendering
         await review.populate('userId', 'name email image');
