@@ -416,7 +416,7 @@ const updateCompany = async (req, res) => {
         }
 
         // Audit Trail Logic
-        const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'tagline', 'serviceRadius', 'logo', 'images', 'videos'];
+        const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'tagline', 'serviceRadius', 'logo', 'coverPhotoUrl', 'images', 'videos'];
         const changes = [];
         trackFields.forEach(field => {
             if (body[field] !== undefined && String(body[field]) !== String(company[field])) {

@@ -177,6 +177,10 @@ const companySchema = new mongoose.Schema({
         type: String,
         default: null
     },
+    coverPhotoUrl: {
+        type: String,
+        default: null
+    },
     isClaimPending: {
         type: Boolean,
         default: false
