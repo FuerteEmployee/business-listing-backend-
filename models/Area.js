@@ -35,6 +35,13 @@ const areaSchema = new mongoose.Schema({
 
 // Prevent duplicate areas within the same city
 areaSchema.index({ city_id: 1, name: 1 }, { unique: true });
+
+// Read-path: GET /locations/areas?city_id=... filters on { city_id, status } and
+// sorts by name; the unique index above stops short because of `status`.
+areaSchema.index({ city_id: 1, status: 1, name: 1 });
+// Name and pincode search on the admin Areas table, which is not scoped to one city.
+areaSchema.index({ name: 1 });
+areaSchema.index({ pincode: 1 });
 // Slugs are scoped to the city, not global: names like "MG Road" or "Gandhi Nagar"
 // recur in nearly every city, and no lookup resolves an area by slug alone.
 areaSchema.index({ city_id: 1, slug: 1 }, { unique: true });
