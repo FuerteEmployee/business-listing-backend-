@@ -33,7 +33,7 @@ const productSchema = new mongoose.Schema({
     brandId: { type: mongoose.Schema.Types.ObjectId, ref: 'Brand' },
     
     sku: { type: String, required: true, unique: true },
-    price: { type: Number, required: true, min: 0 },
+    price: { type: Number, min: 0 },
     minPrice: { type: Number, min: 0 },
     maxPrice: { type: Number, min: 0 },
     priceType: { type: String, enum: ['fixed', 'range'], default: 'fixed' },
