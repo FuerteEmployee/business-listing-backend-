@@ -379,7 +379,7 @@ const updateCompany = async (req, res) => {
 
         const body = { ...req.body };
         // Sanitize fields
-        ['country_id', 'state_id', 'city_id', 'area_id', 'category_id', 'owner', 'latitude', 'longitude', 'gstPan', 'subCategory', 'manualCountry', 'manualState', 'manualCity', 'manualArea'].forEach(field => {
+        ['country_id', 'state_id', 'city_id', 'area_id', 'category_id', 'owner', 'latitude', 'longitude', 'gstPan', 'gstNumber', 'subCategory', 'manualCountry', 'manualState', 'manualCity', 'manualArea'].forEach(field => {
             if (body[field] === '' || body[field] === 'manual') body[field] = null;
         });
 
@@ -416,7 +416,7 @@ const updateCompany = async (req, res) => {
         }
 
         // Audit Trail Logic
-        const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'tagline', 'serviceRadius', 'logo', 'coverPhotoUrl', 'images', 'videos'];
+        const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'gstNumber', 'yearEstablished', 'tagline', 'serviceRadius', 'logo', 'coverPhotoUrl', 'images', 'videos'];
         const changes = [];
         trackFields.forEach(field => {
             if (body[field] !== undefined && String(body[field]) !== String(company[field])) {

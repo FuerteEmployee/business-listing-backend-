@@ -242,6 +242,11 @@ const companySchema = new mongoose.Schema({
         trim: true,
         default: null
     },
+    gstNumber: {
+        type: String,
+        trim: true,
+        default: null
+    },
     subCategory: {
         type: String,
         trim: true,
@@ -273,9 +278,8 @@ const companySchema = new mongoose.Schema({
         trim: true
     },
     yearEstablished: {
-        type: Number,
-        min: 1900,
-        max: new Date().getFullYear() + 1
+        type: mongoose.Schema.Types.Mixed,
+        default: null
     },
     employeeCount: {
         type: Number,
