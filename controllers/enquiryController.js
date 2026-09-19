@@ -171,6 +171,9 @@ exports.createEnquiry = async (req, res) => {
                 business: business._id,
                 agreedToPrivacy: true,
                 source: req.body.source || 'Business Enquiry',
+                // Carry the account link across from the enquiry; without this the lead
+                // could only ever be identified by the name/phone typed into the form.
+                userId: req.user ? req.user._id : null,
                 assignedTo: business.owner || null,
                 assignedToName: business.owner ? 'Brand Owner' : 'Unassigned',
                 message: message

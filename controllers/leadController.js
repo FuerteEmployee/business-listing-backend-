@@ -75,7 +75,11 @@ exports.createLead = async (req, res) => {
             type,
             business: businessId || null,
             agreedToPrivacy: !!agreedToPrivacy,
-            source: source || 'Web Results'
+            source: source || 'Web Results',
+            // Links the lead back to the submitting account. The route is optionally
+            // authenticated, so this stays null for guest submissions - name/phone/email
+            // are then the only identifying details.
+            userId: req.user ? req.user._id : null
         });
 
         // Simple Auto Distribution Logic
@@ -130,7 +134,8 @@ exports.getLeads = async (req, res) => {
         const leads = await Lead.find(query)
             .sort({ createdAt: -1 })
             .populate('business')
-            .populate('assignedTo', 'name email');
+            .populate('assignedTo', 'name email')
+            .populate('userId', 'name email role');
 
         // Append AI score to each lead
         const leadsWithScore = leads.map(lead => ({
@@ -391,7 +396,8 @@ exports.getLeadById = async (req, res) => {
         const { id } = req.params;
         const lead = await Lead.findById(id)
             .populate('business', 'name slug')
-            .populate('assignedTo', 'name email');
+            .populate('assignedTo', 'name email')
+            .populate('userId', 'name email role');
             
         if (!lead) {
             return res.status(404).json({ success: false, message: 'Lead not found' });

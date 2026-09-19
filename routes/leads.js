@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { createLead, getLeads, getUserLeads, updateLeadStatus, addNote, assignLead, getLeadStats, getLeadById } = require('../controllers/leadController');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, admin, optionalAuth } = require('../middleware/authMiddleware');
 const Lead = require('../models/Lead');
 
 // Middleware to authorize admin or assigned merchant/brand owner
@@ -26,8 +26,10 @@ const ensureOwnsOrAdminLead = async (req, res, next) => {
     }
 };
 
-// Public: Create a new lead (enquiry)
-router.post('/', createLead);
+// Public: Create a new lead (enquiry). optionalAuth never rejects - it just attaches
+// req.user when a token is present, so a signed-in submitter gets linked to the lead
+// while guest submissions continue to work unauthenticated.
+router.post('/', optionalAuth, createLead);
 
 // User: Get their own leads
 router.get('/my-leads', protect, getUserLeads);

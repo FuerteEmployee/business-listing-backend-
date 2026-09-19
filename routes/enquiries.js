@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/authMiddleware');
+const { protect, optionalAuth } = require('../middleware/authMiddleware');
 const {
     createEnquiry,
     getUserEnquiries,
@@ -12,8 +12,11 @@ const {
     markEnquiryAsSpam
 } = require('../controllers/enquiryController');
 
-// User enquiry routes
-router.post('/', createEnquiry);
+// User enquiry routes. This one sits above the router.use(protect) below because guests
+// may submit enquiries; optionalAuth attaches req.user when a token is present without
+// rejecting anonymous callers, so the enquiry (and the Lead derived from it) records the
+// submitting account instead of leaving userId permanently null.
+router.post('/', optionalAuth, createEnquiry);
 
 // All enquiry routes require authentication
 router.use(protect);
