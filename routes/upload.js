@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { upload, cloudinary } = require('../config/cloudinary');
+const { upload, uploadDocument, cloudinary } = require('../config/cloudinary');
+const { protect } = require('../middleware/authMiddleware');
 
 // @route   POST /api/upload
 // @desc    Upload a single image to Cloudinary, returns { url }
@@ -20,6 +21,27 @@ router.post('/', (req, res) => {
             console.error('Upload error:', error);
             res.status(500).json({ msg: 'Image upload failed', error: error.message });
         }
+    });
+});
+
+// @route   POST /api/upload/document
+// @desc    Upload a single PDF (e.g. a brochure) to Cloudinary, returns { url, name, size, publicId }
+router.post('/document', protect, (req, res) => {
+    uploadDocument.single('document')(req, res, (err) => {
+        if (err) {
+            console.error('Multer/Cloudinary document error:', err);
+            const msg = err.code === 'LIMIT_FILE_SIZE' ? 'PDF must be 10MB or smaller' : (err.message || 'Error uploading file');
+            return res.status(400).json({ msg });
+        }
+        if (!req.file) {
+            return res.status(400).json({ msg: 'No PDF file provided' });
+        }
+        res.json({
+            url: req.file.path,
+            name: req.file.originalname.replace(/\.pdf$/i, ''),
+            size: req.file.size || 0,
+            publicId: req.file.filename
+        });
     });
 });
 

@@ -173,6 +173,16 @@ const companySchema = new mongoose.Schema({
             platform: { type: String, enum: ['YouTube', 'Vimeo'], default: 'YouTube' }
         }
     ],
+    // Downloadable PDF brochures uploaded by the brand owner (Cloudinary raw files)
+    brochures: [
+        {
+            url: { type: String, required: true },
+            name: { type: String, trim: true, default: 'Brochure' },
+            size: { type: Number, default: 0 }, // bytes
+            publicId: { type: String, default: null },
+            uploadedAt: { type: Date, default: Date.now }
+        }
+    ],
     logo: {
         type: String,
         default: null

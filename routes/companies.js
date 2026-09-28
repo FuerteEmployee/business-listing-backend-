@@ -17,7 +17,8 @@ const {
     getMerchantQuestions,
     answerQuestion,
     getAdminQuestions,
-    deleteQuestion
+    deleteQuestion,
+    downloadBrochure
 } = require('../controllers/companyController');
 const { protect, attachOwnedBrands, checkPermission, optionalAuth } = require('../middleware/authMiddleware');
 
@@ -44,6 +45,9 @@ router.post('/:id/claim', protect, claimCompany);
 
 // @route   GET /api/companies/:id/similar
 router.get('/:id/similar', getSimilarBusinesses);
+
+// @route   GET /api/companies/:id/brochures/:brochureId/download
+router.get('/:id/brochures/:brochureId/download', downloadBrochure);
 
 // @route   GET /api/companies/:id/questions
 router.get('/:id/questions', getQuestions);

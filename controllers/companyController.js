@@ -416,7 +416,7 @@ const updateCompany = async (req, res) => {
         }
 
         // Audit Trail Logic
-        const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'gstNumber', 'yearEstablished', 'tagline', 'serviceRadius', 'logo', 'coverPhotoUrl', 'images', 'videos'];
+        const trackFields = ['name', 'status', 'verified', 'verificationStatus', 'owner', 'manualRank', 'category_id', 'gstPan', 'gstNumber', 'yearEstablished', 'tagline', 'serviceRadius', 'logo', 'coverPhotoUrl', 'images', 'videos', 'brochures'];
         const changes = [];
         trackFields.forEach(field => {
             if (body[field] !== undefined && String(body[field]) !== String(company[field])) {
@@ -1004,8 +1004,85 @@ const deleteQuestion = async (req, res) => {
     }
 };
 
-module.exports = { 
-    getAllCompanies, 
+// @desc    Download a listing's brochure as a file attachment (and log a download_brochure event)
+// @route   GET /api/companies/:id/brochures/:brochureId/download
+// @access  Public
+const downloadBrochure = async (req, res) => {
+    try {
+        const { id, brochureId } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(brochureId)) {
+            return res.status(404).json({ msg: 'Brochure not found' });
+        }
+
+        const company = await Company.findById(id).select('brochures');
+        const brochure = company?.brochures?.id(brochureId);
+        if (!brochure) return res.status(404).json({ msg: 'Brochure not found' });
+
+        // ?inline=1 is the owner's "Preview" in the brand panel: show in the browser, don't count it
+        const inline = req.query.inline === '1';
+        if (!inline) {
+            try {
+                const AnalyticsEvent = require('../models/AnalyticsEvent');
+                await AnalyticsEvent.create({
+                    eventType: 'download_brochure',
+                    businessId: company._id,
+                    sessionId: req.ip || 'anonymous-session',
+                    metadata: { brochureId: String(brochure._id), brochureName: brochure.name }
+                });
+            } catch (logErr) {
+                console.error('Failed to log brochure download:', logErr.message);
+            }
+        }
+
+        // brochures[].url is merchant-writable via PUT /companies/:id, so only proxy files we
+        // host on Cloudinary — anything else is redirected instead of fetched server-side (SSRF).
+        let parsed;
+        try { parsed = new URL(brochure.url); } catch { parsed = null; }
+        if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+            return res.status(404).json({ msg: 'Brochure not found' });
+        }
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'res.cloudinary.com') {
+            return res.redirect(parsed.href);
+        }
+
+        // Public PDF delivery is blocked on this Cloudinary account (401 "deny or ACL failure"),
+        // so fetch through the authenticated download API instead. The public_id is taken from
+        // the URL and must sit in the brochures folder, so a tampered URL can't pull other assets.
+        const { cloudinary } = require('../config/cloudinary');
+        const match = parsed.pathname.match(/^\/[^/]+\/raw\/upload\/(?:v\d+\/)?(.+)$/);
+        const publicId = match ? decodeURIComponent(match[1]) : null;
+        if (!publicId || !publicId.startsWith('fuertedevelopers/brochures/')) {
+            return res.status(404).json({ msg: 'Brochure not found' });
+        }
+        const downloadUrl = cloudinary.utils.private_download_url(publicId, '', { resource_type: 'raw', type: 'upload' });
+
+        const upstream = await fetch(downloadUrl);
+        if (!upstream.ok || !upstream.body) {
+            console.error('Brochure fetch failed:', upstream.status, upstream.headers.get('x-cld-error'));
+            return res.status(502).json({ msg: 'Brochure file is unavailable right now' });
+        }
+
+        const baseName = (brochure.name || 'brochure').replace(/\.pdf$/i, '');
+        const asciiName = baseName.replace(/[^\x20-\x7E]/g, '').replace(/["\\]/g, '').trim() || 'brochure';
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `${inline ? 'inline' : 'attachment'}; filename="${asciiName}.pdf"; filename*=UTF-8''${encodeURIComponent(baseName)}.pdf`
+        );
+        const length = upstream.headers.get('content-length');
+        if (length) res.setHeader('Content-Length', length);
+
+        const { Readable } = require('stream');
+        Readable.fromWeb(upstream.body).pipe(res);
+    } catch (err) {
+        console.error('Brochure download error:', err.message);
+        if (!res.headersSent) res.status(500).json({ msg: 'Server Error' });
+    }
+};
+
+module.exports = {
+    downloadBrochure,
+    getAllCompanies,
     createCompany, 
     updateCompany, 
     deleteCompany, 
