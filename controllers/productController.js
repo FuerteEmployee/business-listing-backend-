@@ -1,5 +1,5 @@
 const Product = require('../models/Product');
-const slugify = require('slugify');
+const { generateUniqueSlug } = require('../utils/uniqueSlug');
 const { isBrandScoped, ownsBrand } = require('../middleware/authMiddleware');
 
 // Get all products
@@ -149,7 +149,7 @@ exports.createProduct = async (req, res) => {
         
         // Auto-generate slug if not provided
         if (req.body.name && !req.body.slug) {
-            req.body.slug = slugify(req.body.name, { lower: true, strict: true });
+            req.body.slug = await generateUniqueSlug(Product, req.body.name);
         }
 
         // Validation for brand owners: the product must belong to one of their brands.
@@ -210,7 +210,7 @@ exports.updateProduct = async (req, res) => {
 
         // Auto-generate slug if name is updated but slug isn't provided
         if (req.body.name && !req.body.slug) {
-            req.body.slug = slugify(req.body.name, { lower: true, strict: true });
+            req.body.slug = await generateUniqueSlug(Product, req.body.name, req.params.id);
         }
 
         let product = await Product.findById(req.params.id);
