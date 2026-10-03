@@ -51,11 +51,11 @@ const productSchema = new mongoose.Schema({
     variants: [productVariantSchema],
     specifications: [
         {
-            title: { type: String, required: true },
+            title: { type: String },
             items: [
                 {
-                    key: { type: String, required: true },
-                    value: { type: String, required: true }
+                    key: { type: String },
+                    value: { type: String }
                 }
             ]
         }
