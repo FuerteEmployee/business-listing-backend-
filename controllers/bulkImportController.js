@@ -68,6 +68,20 @@ const parseHours = (value) => {
     return { open: pad(match[1]), close: pad(match[2]), closed: false };
 };
 
+/** Case-insensitive de-duplication that keeps the first spelling seen. */
+const dedupeKeywords = (list) => {
+    const seen = new Set();
+    return list.filter(k => {
+        const key = norm(k);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
+/** Exact, case-insensitive match on a whole field value. */
+const exactRegex = (value) => new RegExp(`^${str(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+
 const randomPassword = () => `Biz${crypto.randomBytes(6).toString('hex')}!`;
 
 const hashPassword = async (plain) => bcrypt.hash(plain, await bcrypt.genSalt(10));
@@ -95,9 +109,10 @@ const note = (result, row, name, message, level = 'error') => {
 };
 
 /**
- * @desc    Import categories, users and listings from one parsed spreadsheet.
+ * @desc    Import categories, users, listings and keywords from one parsed spreadsheet.
  *          Sheets are processed in dependency order so listings can reference
- *          categories and owners created earlier in the same file.
+ *          categories and owners created earlier in the same file, and keywords can
+ *          target listings created earlier in the same file.
  * @route   POST /api/admin/import
  * @access  Private (listingManagement:write; the users sheet additionally
  *          requires userManagement:write and is skipped without it)
@@ -107,8 +122,9 @@ exports.bulkImport = async (req, res) => {
         const categoryRows = Array.isArray(req.body.categories) ? req.body.categories : [];
         const userRows = Array.isArray(req.body.users) ? req.body.users : [];
         const listingRows = Array.isArray(req.body.listings) ? req.body.listings : [];
+        const keywordRows = Array.isArray(req.body.keywords) ? req.body.keywords : [];
 
-        if (!categoryRows.length && !userRows.length && !listingRows.length) {
+        if (!categoryRows.length && !userRows.length && !listingRows.length && !keywordRows.length) {
             return res.status(400).json({ success: false, msg: 'Nothing to import: the file contained no data rows.' });
         }
 
@@ -121,7 +137,8 @@ exports.bulkImport = async (req, res) => {
         const results = {
             categories: emptySheetResult(),
             users: emptySheetResult(),
-            listings: emptySheetResult()
+            listings: emptySheetResult(),
+            keywords: emptySheetResult()
         };
         const generatedCredentials = [];
 
@@ -451,7 +468,6 @@ exports.bulkImport = async (req, res) => {
                     businessBadgeVerified: parseBool(row.businessBadgeVerified, false),
                     isFeatured: parseBool(row.isFeatured, false),
                     priceRange: matchEnum(row.priceRange, PRICE_RANGES) || '$$',
-                    tags: parseList(row.tags),
                     languages: parseList(row.languages),
                     paymentMethods: parseList(row.paymentMethods),
                     socialLinks: {
@@ -462,6 +478,11 @@ exports.bulkImport = async (req, res) => {
                         youtube: str(row.youtube)
                     }
                 };
+
+                // A blank Tags/Keywords cell leaves an existing listing's keywords alone, so
+                // re-importing listings never wipes keywords added from the Keywords sheet.
+                const tags = dedupeKeywords(parseList(row.tags));
+                if (tags.length) data.tags = tags;
 
                 if (latitude !== null) data.latitude = latitude;
                 if (longitude !== null) data.longitude = longitude;
@@ -516,7 +537,100 @@ exports.bulkImport = async (req, res) => {
             }
         }
 
-        const totals = ['categories', 'users', 'listings'].reduce((acc, key) => {
+        // ==================== 4. KEYWORDS ====================
+        // Each row targets one listing (Business Name, plus City when names repeat). With a
+        // Product Name or SKU it sets that product's search keywords; otherwise it sets the
+        // listing's own keywords (Company.tags). Mode "Add" (default) merges with what is
+        // already there; "Replace" overwrites.
+        if (keywordRows.length) {
+            const Product = require('../models/Product');
+
+            for (let i = 0; i < keywordRows.length; i++) {
+                const row = keywordRows[i];
+                const rowNo = row.__row || i + 2;
+                const rowName = str(row.name) || 'Unknown';
+                try {
+                    const name = str(row.name);
+                    if (!name) throw new Error('Business Name is required');
+                    const keywords = dedupeKeywords(parseList(row.keywords));
+                    if (!keywords.length) throw new Error('Keywords is required');
+
+                    const modeText = norm(row.mode);
+                    if (modeText && !['add', 'replace'].includes(modeText)) {
+                        throw new Error(`Mode "${str(row.mode)}" not understood - use Add or Replace`);
+                    }
+                    const replace = modeText === 'replace';
+
+                    // ---- Listing ----
+                    let city = null;
+                    if (str(row.city)) {
+                        city = findByName(cities, row.city);
+                        if (!city) throw new Error(`City "${str(row.city)}" is not in the location master`);
+                    }
+                    const matches = await Company.find({
+                        name: exactRegex(name),
+                        ...(city ? { city_id: city._id } : {})
+                    }).select('_id name tags').limit(5);
+
+                    if (!matches.length) {
+                        throw new Error(`Business "${name}"${city ? ` in ${city.name}` : ''} was not found`);
+                    }
+                    if (matches.length > 1) {
+                        throw new Error(`${matches.length} businesses are named "${name}" - add the City column to pick one`);
+                    }
+                    const listing = matches[0];
+
+                    // ---- Target: a product, or the listing itself ----
+                    const productName = str(row.productName);
+                    const sku = str(row.sku);
+                    let target;
+                    let current;
+                    let save;
+
+                    if (productName || sku) {
+                        const product = sku
+                            ? await Product.findOne({ sku: exactRegex(sku) }).select('_id name listingId keywords')
+                            : await Product.findOne({ listingId: listing._id, name: exactRegex(productName) }).select('_id name listingId keywords');
+
+                        if (!product) {
+                            throw new Error(sku
+                                ? `No product with SKU "${sku}"`
+                                : `Product "${productName}" was not found under "${listing.name}"`);
+                        }
+                        if (String(product.listingId) !== String(listing._id)) {
+                            throw new Error(`SKU "${sku}" belongs to a different business, not "${listing.name}"`);
+                        }
+                        target = `product "${product.name}"`;
+                        current = product.keywords || [];
+                        // updateOne, not save(): only keywords change, and older products may not
+                        // pass today's full schema validation.
+                        save = (list) => Product.updateOne({ _id: product._id }, { $set: { keywords: list } });
+                    } else {
+                        target = 'business keywords';
+                        current = listing.tags || [];
+                        save = (list) => Company.updateOne({ _id: listing._id }, { $set: { tags: list } });
+                    }
+
+                    const next = replace ? keywords : dedupeKeywords([...current, ...keywords]);
+                    const unchanged = next.length === current.length && next.every((k, idx) => k === current[idx]);
+                    if (unchanged) {
+                        results.keywords.skipped++;
+                        note(results.keywords, rowNo, name, `No change - ${target} already has these keywords.`, 'info');
+                        continue;
+                    }
+
+                    await save(next);
+                    results.keywords.updated++;
+                    note(results.keywords, rowNo, name,
+                        `${replace ? 'Replaced' : 'Added to'} ${target}: now ${next.length} keyword${next.length === 1 ? '' : 's'}.`, 'info');
+                } catch (err) {
+                    results.keywords.failed++;
+                    note(results.keywords, rowNo, rowName, err.message);
+                }
+            }
+        }
+
+        const totals = ['categories', 'users', 'listings', 'keywords'].reduce((acc, key) => {
             acc.created += results[key].created;
             acc.updated += results[key].updated;
             acc.skipped += results[key].skipped;
@@ -531,6 +645,7 @@ exports.bulkImport = async (req, res) => {
             notes: `Spreadsheet import - categories: ${results.categories.created} new/${results.categories.updated} updated, `
                 + `users: ${results.users.created} new/${results.users.updated} updated, `
                 + `listings: ${results.listings.created} new/${results.listings.updated} updated, `
+                + `keywords: ${results.keywords.updated} updated, `
                 + `${totals.failed} failed`,
             ipAddress: req.ip,
             userAgent: req.headers['user-agent']
