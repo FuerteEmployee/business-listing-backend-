@@ -3,7 +3,7 @@ const SystemConfig = require('../models/SystemConfig');
 /**
  * Middleware to fetch and inject system configuration for a given panel.
  * It also enforces feature flags by blocking requests if a feature is hidden.
- * @param {string} panel - The panel making the request (e.g., 'admin', 'merchant', 'frontend')
+ * @param {string} panel - The panel making the request (e.g., 'admin', 'brand', 'frontend')
  */
 const injectSystemConfig = (panel) => {
     return async (req, res, next) => {

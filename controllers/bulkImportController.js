@@ -350,7 +350,7 @@ exports.bulkImport = async (req, res) => {
                             name: ownerName || ownerEmail.split('@')[0],
                             email: ownerEmail,
                             password: await hashPassword(plainPassword),
-                            role: 'Merchant',
+                            role: 'Brand Owner',
                             status: 'Active',
                             isEmailVerified: true,
                             ...(str(row.phone) ? { mobileNumber: str(row.phone) } : {})

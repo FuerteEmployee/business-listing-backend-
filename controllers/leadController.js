@@ -84,32 +84,32 @@ exports.createLead = async (req, res) => {
 
         // Simple Auto Distribution Logic
         if (category) {
-            // Find a merchant with companies in this category who has the best performance score
-            const merchant = await User.findOne({ 
-                role: 'Merchant', 
-                status: 'Active' 
+            // Find a brand owner with companies in this category who has the best performance score
+            const brandOwner = await User.findOne({
+                role: 'Brand Owner',
+                status: 'Active'
             }).sort({ performanceScore: -1 });
 
-            if (merchant) {
-                lead.assignedTo = merchant._id;
-                lead.assignedToName = merchant.name;
+            if (brandOwner) {
+                lead.assignedTo = brandOwner._id;
+                lead.assignedToName = brandOwner.name;
                 lead.assignmentHistory.push({
-                    assignedTo: merchant.name,
+                    assignedTo: brandOwner.name,
                     assignedBy: 'System Auto-Distribute'
                 });
-                
-                // Update merchant stats (using findByIdAndUpdate to avoid password validation issues)
-                await User.findByIdAndUpdate(merchant._id, {
+
+                // Update brand owner stats (using findByIdAndUpdate to avoid password validation issues)
+                await User.findByIdAndUpdate(brandOwner._id, {
                     $inc: { 'leadStats.totalAssigned': 1 }
                 });
 
                 // Send Unified Notification (Email, SMS, Push)
                 const { sendNotification } = require('../services/notificationService');
                 await sendNotification({
-                    recipient: merchant._id,
+                    recipient: brandOwner._id,
                     type: 'Lead',
                     title: 'New Lead Auto-Assigned!',
-                    message: `Hello ${merchant.name}, a new lead for ${category} has been automatically assigned to you.`,
+                    message: `Hello ${brandOwner.name}, a new lead for ${category} has been automatically assigned to you.`,
                     link: '/brand/leads',
                     metadata: { leadId: lead._id.toString(), category }
                 }).catch(e => console.error('Lead Notification error:', e));
@@ -149,6 +149,32 @@ exports.getLeads = async (req, res) => {
     }
 };
 
+// Get leads for the brand owner's own listing(s), scoped by `Lead.business`.
+// The admin-only GET /api/leads has no such scoping, so brand pages use this instead.
+// @route   GET /api/leads/brand
+exports.getBrandLeads = async (req, res) => {
+    try {
+        const ownedIds = (req.ownedBrandIds || []).map(id => id.toString());
+        if (ownedIds.length === 0) {
+            return res.json({ success: true, leads: [] });
+        }
+
+        const { status } = req.query;
+        const query = { business: { $in: ownedIds } };
+        if (status) query.status = status;
+
+        const leads = await Lead.find(query)
+            .sort({ createdAt: -1 })
+            .populate('business', 'name slug')
+            .populate('assignedTo', 'name email');
+
+        res.json({ success: true, leads });
+    } catch (err) {
+        console.error('Error fetching brand leads:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
 // Get user's leads
 exports.getUserLeads = async (req, res) => {
     try {
@@ -184,7 +210,7 @@ exports.updateLeadStatus = async (req, res) => {
             const diffMs = lead.firstContactAt - lead.createdAt;
             lead.responseTime = Math.round(diffMs / 60000); // Minutes
 
-            // Update Merchant Performance
+            // Update Brand Owner Performance
             if (lead.assignedTo) {
                 const user = await User.findById(lead.assignedTo);
                 if (user) {
@@ -364,8 +390,8 @@ exports.getLeadStats = async (req, res) => {
         ]);
         const avgResponseTime = responseTimeAgg[0]?.avg ? Math.round(responseTimeAgg[0].avg) : null;
 
-        // Merchant Ranking
-        const topPerformers = await User.find({ role: 'Merchant' })
+        // Brand Owner Ranking
+        const topPerformers = await User.find({ role: 'Brand Owner' })
             .sort({ performanceScore: -1 })
             .limit(5)
             .select('name performanceScore leadStats');

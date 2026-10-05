@@ -37,7 +37,10 @@ const userSchema = new mongoose.Schema({
     resetPasswordExpire: Date,
     role: {
         type: String,
-        default: 'User'
+        default: 'User',
+        // The Merchant role was retired in favour of Brand Owner. Coerce it here so no code
+        // path (create, save, insertMany or an update query) can store a Merchant account.
+        set: (value) => (typeof value === 'string' && value.trim().toLowerCase() === 'merchant' ? 'Brand Owner' : value)
     },
     status: {
         type: String,
@@ -113,7 +116,7 @@ const userSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
-    // Lead stats (for merchants)
+    // Lead stats (for brand owners)
     leadStats: {
         totalAssigned: { type: Number, default: 0 },
         totalConverted: { type: Number, default: 0 },

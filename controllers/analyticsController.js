@@ -813,10 +813,10 @@ const logEvent = async (req, res) => {
     }
 };
 
-// @desc    Get aggregate analytics for all businesses owned by a merchant
-// @route   GET /api/analytics/merchant/overview
-// @access  Private (Merchant)
-const getMerchantAnalyticsOverview = async (req, res) => {
+// @desc    Get aggregate analytics for all businesses owned by a brand owner
+// @route   GET /api/analytics/brand/overview
+// @access  Private (Brand Owner)
+const getBrandAnalyticsOverview = async (req, res) => {
     try {
         const companies = await Company.find({ owner: req.user.id }).select('_id');
         const companyIds = companies.map(c => c._id);
@@ -875,9 +875,9 @@ const getMerchantAnalyticsOverview = async (req, res) => {
     }
 };
 
-// @desc    Get detailed business analytics for merchant dashboard
-// @route   GET /api/analytics/merchant/business/:businessId
-// @access  Private (Merchant)
+// @desc    Get detailed business analytics for brand owner dashboard
+// @route   GET /api/analytics/brand/business/:businessId
+// @access  Private (Brand Owner)
 const getBusinessAnalyticsDetailed = async (req, res) => {
     try {
         const { businessId } = req.params;
@@ -1038,7 +1038,7 @@ module.exports = {
     getBusinessPerformance,
     getBusinessAnalytics,
     getBusinessAnalyticsDetailed,
-    getMerchantAnalyticsOverview,
+    getBrandAnalyticsOverview,
     getRevenueAnalytics,
     getUserBehaviorAnalytics,
     exportAnalytics,

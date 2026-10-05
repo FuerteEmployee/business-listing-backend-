@@ -51,6 +51,34 @@ const matchRank = (name, term) => {
     return 4; // matched only as a fuzzy subsequence
 };
 
+// Which search parameter a result matched, with the value that matched, so the results
+// page can say why it is listed. Mirrors the searchRank tiers in getAllCompanies.
+// Returns { type: 'name' | 'category' | 'product' | 'keyword', value } or null (fuzzy name hit).
+const describeMatch = (company, products, services, search) => {
+    const re = new RegExp(search.literal, 'i');
+    const isActive = (item) => item.status === 'Active';
+
+    switch (company.searchRank) {
+        case 0:
+            return { type: 'name', value: company.name };
+        case 1:
+            return { type: 'category', value: company.category_id?.name || company.category || '' };
+        case 2: {
+            const item = [...products, ...services].find(i => isActive(i) && re.test(i.name || ''));
+            return item ? { type: 'product', value: item.name } : null;
+        }
+        default: {
+            const tag = (company.tags || []).find(t => re.test(t || ''));
+            if (tag) return { type: 'keyword', value: tag };
+            for (const p of products) {
+                const kw = isActive(p) && (p.keywords || []).find(k => re.test(k || ''));
+                if (kw) return { type: 'keyword', value: kw };
+            }
+            return null;
+        }
+    }
+};
+
 // @desc    Get all companies
 // @route   GET /api/companies
 const getAllCompanies = async (req, res) => {
@@ -113,84 +141,144 @@ const getAllCompanies = async (req, res) => {
             matchQuery[dayCloseKey] = { $gte: currentTimeString };
         }
 
-        // 2. Search Query (Text search with fuzzy matching)
-        if (q) {
-            const fuzzyPattern = createFuzzyRegex(q);
-            const regexQuery = { $regex: fuzzyPattern, $options: 'i' };
-            
-            matchQuery.$or = [
-                { name: regexQuery },
-                { description: regexQuery },
-                { tags: regexQuery } // assuming tags are strings
+        // 2. Search Query. A listing matches on exactly four parameters:
+        //    business name, category, product name, keyword (business tags + product keywords),
+        //    by literal, case-insensitive substring.
+        const buildSearch = async (term) => {
+            const literal = escapeRegex(term);
+            const literalRegex = { $regex: literal, $options: 'i' };
+            const Product = require('../models/Product');
+            const Service = require('../models/Service');
+            const Category = require('../models/Category');
+
+            const [productNameIds, serviceNameIds, productKeywordIds, matchedCategories] = await Promise.all([
+                Product.distinct('listingId', { status: 'Active', name: literalRegex }),
+                Service.distinct('listingId', { status: 'Active', name: literalRegex }),
+                Product.distinct('listingId', { status: 'Active', keywords: literalRegex }),
+                Category.find({ name: literalRegex }).select('_id').lean()
+            ]);
+
+            const s = {
+                term,
+                literal,
+                categoryIds: matchedCategories.map(c => c._id),
+                // Services count as catalogue items alongside products
+                productIds: [...productNameIds, ...serviceNameIds].filter(Boolean),
+                keywordIds: productKeywordIds.filter(Boolean)
+            };
+            s.or = [
+                { name: literalRegex },
+                { category: literalRegex },
+                { category_id: { $in: s.categoryIds } },
+                { _id: { $in: s.productIds } },
+                { tags: literalRegex },
+                { _id: { $in: s.keywordIds } }
             ];
-        }
+            return s;
+        };
 
-        let pipeline = [];
-
-        // 3. Geospatial Sort (must be first stage)
-        if (sort === 'distance' && lat && lng) {
-            pipeline.push({
-                $geoNear: {
-                    near: { type: "Point", coordinates: [parseFloat(lng), parseFloat(lat)] },
-                    distanceField: "distance",
-                    spherical: true,
-                    query: matchQuery
-                }
-            });
-        } else {
-            pipeline.push({ $match: matchQuery });
-            
-            // Initial Sort if not distance
-            if (sort === 'latest') pipeline.push({ $sort: { createdAt: -1 } });
-            else if (sort === 'rating') pipeline.push({ $sort: { rating: -1 } });
-            else if (sort === 'reviews') pipeline.push({ $sort: { reviewCount: -1 } });
-            else if (sort === 'price_asc') pipeline.push({ $sort: { priceRange: 1, rating: -1 } });
-            else if (sort === 'price_desc') pipeline.push({ $sort: { priceRange: -1, rating: -1 } });
-            else {
-                // Default Ranking (Premium First, then manualRank, then rating)
-                pipeline.push({ $sort: { isFeatured: -1, manualRank: -1, rating: -1 } });
+        // Typo tolerance: if the full term finds nothing, retry with the last one or two
+        // letters dropped ("Acmee" -> "Acme"), never below 3 letters. Unlike a fuzzy
+        // subsequence pattern, this cannot match unrelated names.
+        const baseTerm = q ? String(q).trim() : '';
+        const termVariants = [];
+        if (baseTerm) {
+            termVariants.push(baseTerm);
+            for (let cut = 1; cut <= 2 && baseTerm.length - cut >= 3; cut++) {
+                termVariants.push(baseTerm.slice(0, -cut).trim());
             }
         }
 
-        // 4. Pagination & Count
-        const countPipeline = [...pipeline, { $count: "total" }];
-        const countResult = await Company.aggregate(countPipeline);
-        let total = countResult.length > 0 ? countResult[0].total : 0;
+        // Rank each hit by the strongest parameter it matched:
+        // 0 business name, 1 category, 2 product name, 3 keyword.
+        const searchRankStage = (s) => ({
+            $addFields: {
+                searchRank: {
+                    $switch: {
+                        branches: [
+                            { case: { $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: s.literal, options: 'i' } }, then: 0 },
+                            {
+                                case: {
+                                    $or: [
+                                        { $in: ['$category_id', s.categoryIds] },
+                                        { $regexMatch: { input: { $ifNull: ['$category', ''] }, regex: s.literal, options: 'i' } }
+                                    ]
+                                },
+                                then: 1
+                            },
+                            { case: { $in: ['$_id', s.productIds] }, then: 2 }
+                        ],
+                        default: 3
+                    }
+                }
+            }
+        });
 
-        // Fallback: If 0 results matching selected city, try searching without the city filter
-        if (total === 0 && matchQuery.city_id) {
-            const fallbackMatchQuery = { ...matchQuery };
-            delete fallbackMatchQuery.city_id;
+        const sortStage = (s) => {
+            if (sort === 'latest') return { $sort: { createdAt: -1 } };
+            if (sort === 'rating') return { $sort: { rating: -1 } };
+            if (sort === 'reviews') return { $sort: { reviewCount: -1 } };
+            if (sort === 'price_asc') return { $sort: { priceRange: 1, rating: -1 } };
+            if (sort === 'price_desc') return { $sort: { priceRange: -1, rating: -1 } };
+            // Default ranking: best search match first (when searching), then Premium,
+            // then manualRank, then rating.
+            return { $sort: { ...(s ? { searchRank: 1 } : {}), isFeatured: -1, manualRank: -1, rating: -1 } };
+        };
 
-            let fallbackPipeline = [];
+        const buildPipeline = (match, s) => {
+            const stages = [];
+            // 3. Geospatial Sort (must be first stage)
             if (sort === 'distance' && lat && lng) {
-                fallbackPipeline.push({
+                stages.push({
                     $geoNear: {
                         near: { type: "Point", coordinates: [parseFloat(lng), parseFloat(lat)] },
                         distanceField: "distance",
                         spherical: true,
-                        query: fallbackMatchQuery
+                        query: match
                     }
                 });
+                if (s) stages.push(searchRankStage(s));
             } else {
-                fallbackPipeline.push({ $match: fallbackMatchQuery });
-                if (sort === 'latest') fallbackPipeline.push({ $sort: { createdAt: -1 } });
-                else if (sort === 'rating') fallbackPipeline.push({ $sort: { rating: -1 } });
-                else if (sort === 'reviews') fallbackPipeline.push({ $sort: { reviewCount: -1 } });
-                else if (sort === 'price_asc') fallbackPipeline.push({ $sort: { priceRange: 1, rating: -1 } });
-                else if (sort === 'price_desc') fallbackPipeline.push({ $sort: { priceRange: -1, rating: -1 } });
-                else {
-                    fallbackPipeline.push({ $sort: { isFeatured: -1, manualRank: -1, rating: -1 } });
-                }
+                stages.push({ $match: match });
+                if (s) stages.push(searchRankStage(s));
+                stages.push(sortStage(s));
             }
+            return stages;
+        };
 
-            const fallbackCountPipeline = [...fallbackPipeline, { $count: "total" }];
-            const fallbackCountResult = await Company.aggregate(fallbackCountPipeline);
-            const fallbackTotal = fallbackCountResult.length > 0 ? fallbackCountResult[0].total : 0;
+        const countFor = async (stages) => {
+            const result = await Company.aggregate([...stages, { $count: "total" }]);
+            return result.length > 0 ? result[0].total : 0;
+        };
 
-            if (fallbackTotal > 0) {
-                pipeline = fallbackPipeline;
-                total = fallbackTotal;
+        // 4. Pagination & Count, widening step by step only when a step finds nothing:
+        //    for each term variant (full term first), try with the city filter, then without.
+        const withoutCity = (match) => { const m = { ...match }; delete m.city_id; return m; };
+        let pipeline = null;
+        let total = 0;
+        let search = null;
+        const tryMatch = async (match, s) => {
+            const stages = buildPipeline(match, s);
+            const count = await countFor(stages);
+            // Keep the first attempt even when empty, so a miss still returns a valid page
+            if (count > 0 || pipeline === null) {
+                pipeline = stages;
+                total = count;
+                search = s;
+            }
+            return count;
+        };
+
+        if (termVariants.length === 0) {
+            if (await tryMatch(matchQuery, null) === 0 && matchQuery.city_id) {
+                await tryMatch(withoutCity(matchQuery), null);
+            }
+        } else {
+            for (const term of termVariants) {
+                const s = await buildSearch(term);
+                const match = { ...matchQuery, $or: s.or };
+                if (await tryMatch(match, s) > 0) break;
+                if (match.city_id && await tryMatch(withoutCity(match), s) > 0) break;
             }
         }
 
@@ -244,12 +332,16 @@ const getAllCompanies = async (req, res) => {
             const fallbackImage = company.category_id?.image || null;
             const coverUrl = company.image || (coverObj ? (typeof coverObj === 'object' && coverObj !== null ? coverObj.url : coverObj) : null) || fallbackImage;
 
+            const products = productsByCompany[company._id.toString()] || [];
+            const services = servicesByCompany[company._id.toString()] || [];
+
             return {
                 ...company,
                 image: coverUrl,
                 photos: photoUrls,
-                products: productsByCompany[company._id.toString()] || [],
-                services: servicesByCompany[company._id.toString()] || []
+                products,
+                services,
+                ...(search && { matchedOn: describeMatch(company, products, services, search) })
             };
         });
 
@@ -457,7 +549,7 @@ const updateCompany = async (req, res) => {
                     },
                     ipAddress: req.ip,
                     userAgent: req.headers['user-agent'],
-                    notes: `Merchant ${req.user.name} updated listing '${company.name}'`
+                    notes: `Brand Owner ${req.user.name} updated listing '${company.name}'`
                 });
             } catch (auditErr) {
                 console.error('Failed to write company update audit log:', auditErr.message);
@@ -628,13 +720,35 @@ const autocomplete = async (req, res) => {
         // "Precision CNC Works".
         const substring = new RegExp(escaped, 'i');
 
-        const [categories, companies] = await Promise.all([
-            Category.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
-            Company.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean()
+        const Product = require('../models/Product');
+        // Individual keyword values matching the term, from an array field. Unwinding first
+        // means the suggestion is the keyword itself, not the whole document's keyword list.
+        const matchingKeywords = (Model, field, match) => Model.aggregate([
+            { $match: { ...match, [field]: substring } },
+            { $unwind: `$${field}` },
+            { $match: { [field]: substring } },
+            { $group: { _id: { $toLower: { $trim: { input: `$${field}` } } }, text: { $first: { $trim: { input: `$${field}` } } } } },
+            { $limit: AUTOCOMPLETE_FETCH_LIMIT }
         ]);
+
+        const [categories, companies, products, productKeywords, companyTags] = await Promise.all([
+            Category.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
+            Company.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
+            Product.find({ name: substring, status: 'Active' }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
+            matchingKeywords(Product, 'keywords', { status: 'Active' }),
+            matchingKeywords(Company, 'tags', { status: { $in: ['Approved', 'Active'] } })
+        ]);
+
+        // One Keyword row per distinct word, whichever source it came from
+        const keywordMap = new Map();
+        [...productKeywords, ...companyTags].forEach(k => {
+            if (k._id && !keywordMap.has(k._id)) keywordMap.set(k._id, k.text);
+        });
 
         let results = [
             ...categories.map(c => ({ text: c.name, slug: c.slug, type: 'Category' })),
+            ...[...keywordMap.values()].map(text => ({ text, type: 'Keyword' })),
+            ...products.map(p => ({ text: p.name, slug: p.slug, type: 'Product' })),
             ...companies.map(c => ({ text: c.name, slug: c.slug, type: 'Business' }))
         ];
 
@@ -891,10 +1005,10 @@ const importOSM = async (req, res) => {
     }
 };
 
-// @desc    Get all questions for merchant's businesses
-// @route   GET /api/companies/questions/merchant
-// @access  Private (Merchant)
-const getMerchantQuestions = async (req, res) => {
+// @desc    Get all questions for brand owner's businesses
+// @route   GET /api/companies/questions/brand
+// @access  Private (Brand Owner)
+const getBrandQuestions = async (req, res) => {
     try {
         const Question = require('../models/Question');
         const Company = require('../models/Company');
@@ -1034,7 +1148,7 @@ const downloadBrochure = async (req, res) => {
             }
         }
 
-        // brochures[].url is merchant-writable via PUT /companies/:id, so only proxy files we
+        // brochures[].url is brand owner-writable via PUT /companies/:id, so only proxy files we
         // host on Cloudinary — anything else is redirected instead of fetched server-side (SSRF).
         let parsed;
         try { parsed = new URL(brochure.url); } catch { parsed = null; }
@@ -1096,7 +1210,7 @@ module.exports = {
     postQuestion,
     reportCompany,
     importOSM,
-    getMerchantQuestions,
+    getBrandQuestions,
     answerQuestion,
     getAdminQuestions,
     deleteQuestion

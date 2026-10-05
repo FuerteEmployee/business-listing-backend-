@@ -15,14 +15,14 @@ async function seedConfig() {
         });
         console.log('Admin Config Result:', adminRes.data);
 
-        console.log('\n--- Seeding Merchant Config ---');
-        const merchantRes = await axios.post(`http://localhost:${port}/api/mc/${token}`, {
-            panel: 'merchant',
+        console.log('\n--- Seeding Brand Config ---');
+        const brandRes = await axios.post(`http://localhost:${port}/api/mc/${token}`, {
+            panel: 'brand',
             dbName: 'justdial',
             hiddenFeatures: ['leads'],
             isActive: true
         });
-        console.log('Merchant Config Result:', merchantRes.data);
+        console.log('Brand Config Result:', brandRes.data);
 
         console.log('\n--- Verifying Routing Protection ---');
         try {

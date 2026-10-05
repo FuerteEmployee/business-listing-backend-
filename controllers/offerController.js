@@ -1,9 +1,9 @@
 const Offer = require('../models/Offer');
 const Company = require('../models/Company');
 
-// @desc    Get all offers for a merchant
-// @route   GET /api/offers/merchant
-exports.getMerchantOffers = async (req, res) => {
+// @desc    Get all offers for a brand owner
+// @route   GET /api/offers/brand
+exports.getBrandOffers = async (req, res) => {
     try {
         const ownCompanies = await Company.find({ owner: req.user._id }).select('_id');
         const companyIds = ownCompanies.map(c => c._id);
@@ -79,7 +79,7 @@ exports.deleteOffers = async (req, res) => {
     try {
         const { ids } = req.body; // Array of IDs
         
-        // Safety check: ensure all offers belong to merchant companies
+        // Safety check: ensure all offers belong to brand owner companies
         const ownCompanies = await Company.find({ owner: req.user._id }).select('_id');
         const companyIds = ownCompanies.map(c => c._id);
 

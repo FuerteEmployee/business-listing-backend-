@@ -24,7 +24,7 @@ async function testAdminFiltering() {
         const nonAdmins = adminUsers.filter(u => !['Super Admin', 'Admin', 'Moderator'].includes(u.role));
         console.log(`   Fetched ${adminUsers.length} users.`);
         if (nonAdmins.length === 0) {
-            console.log('   ✅ Success: No regular users or merchants found in admin list.');
+            console.log('   ✅ Success: No regular users or brand owners found in admin list.');
         } else {
             console.log('   ❌ Error: Found non-admin accounts in admin list:', nonAdmins.map(u => u.name));
         }
@@ -35,13 +35,13 @@ async function testAdminFiltering() {
         const allUsers = allRes.data.users;
         
         const containsRegularUsers = allUsers.some(u => u.role === 'User');
-        const containsMerchants = allUsers.some(u => u.role === 'Merchant');
+        const containsBrandOwners = allUsers.some(u => u.role === 'Brand Owner');
         
         console.log(`   Fetched ${allUsers.length} users total.`);
-        if (containsRegularUsers && containsMerchants) {
-            console.log('   ✅ Success: General user list contains both regular users and merchants.');
+        if (containsRegularUsers && containsBrandOwners) {
+            console.log('   ✅ Success: General user list contains both regular users and brand owners.');
         } else {
-            console.log('   ❌ Error: General user list is missing regular users or merchants.');
+            console.log('   ❌ Error: General user list is missing regular users or brand owners.');
         }
 
     } catch (err) {

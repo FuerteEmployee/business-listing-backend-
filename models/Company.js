@@ -246,7 +246,7 @@ const companySchema = new mongoose.Schema({
         4: { type: Number, default: 0 },
         5: { type: Number, default: 0 }
     },
-    // Merchant Onboarding & Compliance
+    // Brand Owner Onboarding & Compliance
     gstPan: {
         type: String,
         trim: true,

@@ -161,7 +161,7 @@ exports.createEnquiry = async (req, res) => {
 
         // Send In-app & Multi-channel notifications to Managers of these businesses
         for (const business of businesses) {
-            // Auto create a Lead for the merchant so it displays in their Leads dashboard
+            // Auto create a Lead for the brand owner so it displays in their Leads dashboard
             const newLead = new Lead({
                 name,
                 phone,
@@ -193,8 +193,8 @@ exports.createEnquiry = async (req, res) => {
             }
         }
 
-        // Send to merchant inbox (would integrate with lead system)
-        // For now, just mark status as available for merchant to see
+        // Send to brand owner inbox (would integrate with lead system)
+        // For now, just mark status as available for brand owner to see
 
         // Update user enquiry stats
         if (req.user) {
@@ -264,7 +264,7 @@ exports.getEnquiryDetail = async (req, res) => {
             return res.status(404).json({ success: false, msg: 'Enquiry not found' });
         }
 
-        // Check authorization - only creator or merchant can view
+        // Check authorization - only creator or brand owner can view
         if (enquiry.userId.toString() !== req.user._id.toString() && 
             !enquiry.businessIds.some(bid => bid._id === req.user._id)) {
             return res.status(403).json({ success: false, msg: 'Unauthorized' });
@@ -326,7 +326,7 @@ exports.resolveEnquiry = async (req, res) => {
         enquiry.resolvedBy = 'User';
         await enquiry.save();
 
-        // Notify Merchants that the enquiry is resolved
+        // Notify Brand Owners that the enquiry is resolved
         for (const businessId of enquiry.businessIds) {
             const business = await Company.findById(businessId);
             if (business && business.owner) {
@@ -336,7 +336,7 @@ exports.resolveEnquiry = async (req, res) => {
                     type: 'System',
                     title: 'Enquiry Resolved',
                     message: `Enquiry #${enquiry._id.toString().slice(-6)} has been marked as resolved by the user.`,
-                    link: `/merchant/leads/${enquiry._id}`,
+                    link: `/brand/leads`,
                     metadata: { enquiryId: enquiry._id }
                 });
             }
@@ -349,15 +349,15 @@ exports.resolveEnquiry = async (req, res) => {
     }
 };
 
-// ==================== MERCHANT INBOX ====================
+// ==================== BRAND OWNER INBOX ====================
 
-// @desc    Get merchant's enquiry inbox
-// @route   GET /api/enquiries/merchant/inbox
-exports.getMerchantInbox = async (req, res) => {
+// @desc    Get brand owner's enquiry inbox
+// @route   GET /api/enquiries/brand/inbox
+exports.getBrandInbox = async (req, res) => {
     try {
         const { page = 1, limit = 20, status, sortBy = '-createdAt' } = req.query;
 
-        // Get all businesses owned by merchant
+        // Get all businesses owned by brand owner
         const businesses = await Company.find({ owner: req.user._id });
         const businessIds = businesses.map(b => b._id);
 
@@ -412,7 +412,7 @@ exports.getMerchantInbox = async (req, res) => {
     }
 };
 
-// ==================== MERCHANT RESPONSES ====================
+// ==================== BRAND OWNER RESPONSES ====================
 
 // @desc    Reply to enquiry
 // @route   POST /api/enquiries/:id/reply
@@ -425,7 +425,7 @@ exports.replyToEnquiry = async (req, res) => {
             return res.status(404).json({ success: false, msg: 'Enquiry not found' });
         }
 
-        // Check if merchant owns the business
+        // Check if brand owner owns the business
         const business = await Company.findById(businessId);
         if (!business || business.owner.toString() !== req.user._id.toString()) {
             return res.status(403).json({ success: false, msg: 'Unauthorized' });
@@ -454,7 +454,7 @@ exports.replyToEnquiry = async (req, res) => {
                 targetId: business._id,
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent'],
-                notes: `Merchant ${req.user.name} replied to enquiry reference #${enquiry._id.toString().slice(-6).toUpperCase()} for listing '${business.name}'`
+                notes: `Brand Owner ${req.user.name} replied to enquiry reference #${enquiry._id.toString().slice(-6).toUpperCase()} for listing '${business.name}'`
             });
         } catch (auditErr) {
             console.error('Failed to log lead reply audit:', auditErr.message);

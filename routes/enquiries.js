@@ -7,7 +7,7 @@ const {
     getEnquiryDetail,
     deleteEnquiry,
     resolveEnquiry,
-    getMerchantInbox,
+    getBrandInbox,
     replyToEnquiry,
     markEnquiryAsSpam
 } = require('../controllers/enquiryController');
@@ -26,8 +26,8 @@ router.get('/:id', getEnquiryDetail);
 router.delete('/:id', deleteEnquiry);
 router.put('/:id/resolve', resolveEnquiry);
 
-// Merchant inbox routes
-router.get('/merchant/inbox', getMerchantInbox);
+// Brand Owner inbox routes
+router.get('/brand/inbox', getBrandInbox);
 router.post('/:id/reply', replyToEnquiry);
 router.put('/:id/mark-spam', markEnquiryAsSpam);
 

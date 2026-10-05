@@ -32,8 +32,8 @@ const initEmailDigestJob = () => {
                 let digestContent = '';
                 let hasActivity = false;
 
-                // --- CASE A: Merchant/Admin (Leads & Enquiries for their businesses) ---
-                if (['Merchant', 'Company Owner', 'Brand Owner', 'Super Admin'].includes(user.role)) {
+                // --- CASE A: Brand Owner/Admin (Leads & Enquiries for their businesses) ---
+                if (['Company Owner', 'Brand Owner', 'Super Admin'].includes(user.role)) {
                     // Find his businesses
                     const myBusinesses = await Company.find({ owner: user.id }).select('_id name');
                     const bizIds = myBusinesses.map(b => b._id);
@@ -53,7 +53,7 @@ const initEmailDigestJob = () => {
 
                     if (newLeads.length > 0 || newEnquiries.length > 0) {
                         hasActivity = true;
-                        digestContent += `<h2>Merchant Activity Summary</h2>`;
+                        digestContent += `<h2>Brand Owner Activity Summary</h2>`;
                         if (newLeads.length > 0) {
                             digestContent += `<p>You received <b>${newLeads.length}</b> new leads this week.</p>`;
                         }

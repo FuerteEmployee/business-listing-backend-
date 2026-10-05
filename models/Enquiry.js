@@ -43,7 +43,7 @@ const enquirySchema = new mongoose.Schema({
         type: String,
         default: 'Search'
     },
-    // Merchant responses
+    // Brand Owner responses
     responses: [
         {
             businessId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },

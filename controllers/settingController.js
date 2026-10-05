@@ -12,12 +12,12 @@ const sanitizeDiscoveryChips = (chips) => {
 
 /**
  * Get panel-specific configuration (publicly accessible but limited)
- * @param {string} panel - admin | merchant | frontend
+ * @param {string} panel - admin | brand | frontend
  */
 exports.getPanelConfig = async (req, res) => {
     try {
         const { panel } = req.query;
-        if (!['admin', 'merchant', 'frontend'].includes(panel)) {
+        if (!['admin', 'brand', 'frontend'].includes(panel)) {
             return res.status(400).json({ success: false, message: 'Invalid panel' });
         }
 

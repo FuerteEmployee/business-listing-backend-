@@ -47,9 +47,9 @@ exports.register = async (req, res) => {
             verificationToken
         });
 
-        // Auto-create company for merchants/owners
-        const isMerchant = ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(user.role);
-        if (isMerchant) {
+        // Auto-create company for brand owners
+        const isBrandOwner = ['Brand Owner', 'Company Owner', 'owner', 'Owner', 'OWNER'].includes(user.role);
+        if (isBrandOwner) {
             const CategoryModel = require('../models/Category');
             const CompanyModel = require('../models/Company');
             const slugify = require('slugify');

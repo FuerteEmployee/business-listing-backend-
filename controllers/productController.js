@@ -78,7 +78,7 @@ exports.getProduct = async (req, res) => {
 
         // Multi-tenancy isolation: block access for tenants if the product belongs to another company.
         // Mirrors the scoping used in updateProduct/deleteProduct rather than a hand-rolled role
-        // check, so it also covers 'Merchant' and the lowercase owner/Owner/OWNER role spellings.
+        // check, so it also covers 'Company Owner' and the lowercase owner/Owner/OWNER role spellings.
         if (isBrandScoped(req.user)) {
             const listingId = product.listingId?._id || product.listingId;
             if (!ownsBrand(req, listingId)) {

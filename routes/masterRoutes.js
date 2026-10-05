@@ -149,7 +149,7 @@ router.get('/:token', validateMasterToken, async (req, res) => {
 
         const featureMap = {
             admin: ['dashboard', 'users', 'listings', 'categories', 'products', 'services', 'reviews', 'leads', 'adminteam', 'roles', 'fraud', 'auditlogs', 'broadcasting', 'claims', 'discovery', 'locations', 'plans', 'coupons', 'overrides', 'faqs', 'settings', 'reports', 'cms', 'cmsdashboard', 'articlesblogs', 'staticpages', 'faqmanager', 'homebanners', 'seoblocks', 'medialibrary', 'revenue', 'revenuedashboard', 'transactions', 'refundqueue', 'invoices', 'gstreport', 'failedpayments', 'payouts', 'ads', 'addashboard', 'manageads', 'adslotconfig'],
-            merchant: ['dashboard', 'analytics', 'leads', 'reviews', 'mybrands', 'categories', 'products', 'servicecatalogue', 'locations', 'promotionsads', 'offersdeals', 'plansbilling', 'notificationcenter'],
+            brand: ['dashboard', 'analytics', 'leads', 'reviews', 'mybrands', 'categories', 'products', 'servicecatalogue', 'locations', 'promotionsads', 'offersdeals', 'plansbilling', 'notificationcenter'],
             frontend: ['home', 'search', 'categories', 'businessdetail', 'productdetail']
         };
 
@@ -194,7 +194,7 @@ router.get('/:token', validateMasterToken, async (req, res) => {
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            ${['admin', 'merchant', 'frontend'].map(panel => {
+            ${['admin', 'brand', 'frontend'].map(panel => {
                 const config = configMap[panel] || { dbName: 'justdial', paginationLimit: 10, hiddenFeatures: [], isActive: true };
                 return `
                 <div class="glass p-8 rounded-[3rem] flex flex-col h-full shadow-2xl">

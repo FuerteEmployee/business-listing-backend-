@@ -49,12 +49,11 @@ exports.protect = async (req, res, next) => {
  * Every other authenticated role - Super Admin and the custom RBAC admin roles -
  * sees the whole platform.
  *
- * 'Merchant' is the role the admin Users form and the spreadsheet import assign to
- * listing owners, so it must be here; leaving it out is what let merchants read and
- * write other tenants' catalogues. The lower/upper-case 'owner' spellings come from
- * older records and the importer, which never normalised the role string.
+ * 'Brand Owner' is the role the admin Users form and the spreadsheet import assign to
+ * listing owners. The lower/upper-case 'owner' spellings come from older records and
+ * the importer, which never normalised the role string.
  */
-const BRAND_SCOPED_ROLES = ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'];
+const BRAND_SCOPED_ROLES = ['Brand Owner', 'Company Owner', 'owner', 'Owner', 'OWNER'];
 exports.BRAND_SCOPED_ROLES = BRAND_SCOPED_ROLES;
 
 /** True when this user may only see/act on their own brands. */
@@ -159,13 +158,12 @@ exports.checkPermission = (module, action) => {
         // Super Admin has all permissions bypass
         if (req.user.role === 'Super Admin') return next();
 
-        // Brand Owners/merchants can access their own audit logs and CSV export
-        if (module === 'auditLog' && action === 'read' && 
-            ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role)) {
+        // Brand Owners can access their own audit logs and CSV export
+        if (module === 'auditLog' && action === 'read' && BRAND_SCOPED_ROLES.includes(req.user.role)) {
             return next();
         }
         if (module === 'reporting' && action === 'export' && req.originalUrl.includes('/audit-logs/export/csv') &&
-            ['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role)) {
+            BRAND_SCOPED_ROLES.includes(req.user.role)) {
             return next();
         }
 

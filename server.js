@@ -130,10 +130,9 @@ app.use('/api/admin', injectSystemConfig('admin'), require('./routes/admin'));
 app.use('/api/enquiries', injectSystemConfig('admin'), require('./routes/enquiries'));
 app.use('/api/fraud', injectSystemConfig('admin'), require('./routes/fraud'));
 app.use('/api/cms', require('./routes/cms'));
-app.use('/api/merchant', injectSystemConfig('merchant'), require('./routes/merchant'));
 app.use('/api/revenue',  require('./routes/revenue'));
 app.use('/api/ads',      require('./routes/ads'));
-app.use('/api/merchant-ads', require('./routes/merchantAds'));
+app.use('/api/brand-ads', require('./routes/brandAds'));
 app.use('/api/reports',  require('./routes/reports'));
 app.use('/api/osm',      require('./routes/osm'));
 

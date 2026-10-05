@@ -114,7 +114,7 @@ const getDashboardStats = async (req, res) => {
             totalServices, 
             totalBrandLocations,
             leadStats,
-            merchantStats,
+            brandOwnerStats,
             categoryStats,
             recentActivity,
             currentCompanies,
@@ -155,9 +155,9 @@ const getDashboardStats = async (req, res) => {
                 { $group: { _id: "$status", count: { $sum: 1 } } }
             ]),
 
-            // Merchant Status Distribution (Admin only)
+            // Brand Owner Status Distribution (Admin only)
             !isBrandOwner ? User.aggregate([
-                { $match: { role: 'Merchant' } },
+                { $match: { role: { $in: ['Brand Owner', 'Company Owner'] } } },
                 { $group: { _id: "$status", count: { $sum: 1 } } }
             ]) : Promise.resolve([]),
 
@@ -383,7 +383,7 @@ const getDashboardStats = async (req, res) => {
             pendingModerationListings,
             topCities,
             leadPipeline: leadStats,
-            merchantHealth: merchantStats,
+            brandOwnerHealth: brandOwnerStats,
             topCategories: categoryStats,
             recentActivity,
             adminTeam,

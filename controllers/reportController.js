@@ -1,7 +1,6 @@
 const User = require('../models/User');
 const Company = require('../models/Company');
 const Transaction = require('../models/Transaction');
-const Order = require('../models/Order');
 const Lead = require('../models/Lead');
 const Enquiry = require('../models/Enquiry');
 const Review = require('../models/Review');

@@ -226,12 +226,12 @@ exports.getAdPerformance = async (req, res) => {
     }
 };
 
-// --- Merchant Specific Controllers ---
+// --- Brand Owner Specific Controllers ---
 
-// @desc    Get merchant's advertisements
-// @route   GET /api/merchant-ads
+// @desc    Get brand owner's advertisements
+// @route   GET /api/brand-ads
 // @access  Private
-exports.getMerchantAds = async (req, res) => {
+exports.getBrandAds = async (req, res) => {
     try {
         // Find companies owned by this user
         const ownCompanies = await Company.find({ owner: req.user._id }).select('_id');
@@ -252,10 +252,10 @@ exports.getMerchantAds = async (req, res) => {
     }
 };
 
-// @desc    Create merchant advertisement (Boost)
-// @route   POST /api/merchant-ads
+// @desc    Create brand owner advertisement (Boost)
+// @route   POST /api/brand-ads
 // @access  Private
-exports.createMerchantAd = async (req, res) => {
+exports.createBrandAd = async (req, res) => {
     try {
         const { businessId, slotId, title, budget, schedule, pricingModel, targetLocations, targetCategories } = req.body;
 
@@ -284,9 +284,9 @@ exports.createMerchantAd = async (req, res) => {
     }
 };
 
-// @desc    Merchant Toggle Ad Status (Pause/Resume)
-// @route   PATCH /api/merchant-ads/:id/toggle
-exports.toggleMerchantAdStatus = async (req, res) => {
+// @desc    Brand Owner Toggle Ad Status (Pause/Resume)
+// @route   PATCH /api/brand-ads/:id/toggle
+exports.toggleBrandAdStatus = async (req, res) => {
     try {
         const ad = await Advertisement.findById(req.params.id);
         if (!ad) return res.status(404).json({ success: false, msg: 'Ad not found' });
@@ -312,9 +312,9 @@ exports.toggleMerchantAdStatus = async (req, res) => {
     }
 };
 
-// @desc    Get merchant ad analytics
-// @route   GET /api/merchant-ads/stats
-exports.getMerchantAdStats = async (req, res) => {
+// @desc    Get brand owner ad analytics
+// @route   GET /api/brand-ads/stats
+exports.getBrandAdStats = async (req, res) => {
     try {
         const ownCompanies = await Company.find({ owner: req.user._id }).select('_id');
         const companyIds = ownCompanies.map(c => c._id);

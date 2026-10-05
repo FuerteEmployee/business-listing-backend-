@@ -1,7 +1,7 @@
 /**
  * Seeds every State and City of India into the location tables, so the
  * Country > State > City > Area dropdowns (admin Create/Edit Listing, admin
- * Locations, merchant profile, public search) cover the whole country instead of
+ * Locations, brand owner profile, public search) cover the whole country instead of
  * only the handful of hand-seeded rows.
  *
  * Result for India: 36 states/UTs and 7,873 cities.

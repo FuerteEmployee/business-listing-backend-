@@ -4,7 +4,7 @@ const SystemConfigSchema = new mongoose.Schema({
     panel: {
         type: String,
         required: true,
-        enum: ['admin', 'merchant', 'frontend'],
+        enum: ['admin', 'brand', 'frontend'],
         unique: true
     },
     dbName: {

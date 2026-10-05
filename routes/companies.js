@@ -14,7 +14,7 @@ const {
     getQuestions,
     postQuestion,
     importOSM,
-    getMerchantQuestions,
+    getBrandQuestions,
     answerQuestion,
     getAdminQuestions,
     deleteQuestion,
@@ -67,8 +67,8 @@ router.post('/:id/report', protect, (req, res, next) => {
 // @route   GET /api/companies/my-companies
 router.get('/my-companies', protect, getMyCompanies);
 
-// @route   GET /api/companies/questions/merchant
-router.get('/questions/merchant', protect, getMerchantQuestions);
+// @route   GET /api/companies/questions/brand
+router.get('/questions/brand', protect, getBrandQuestions);
 
 // @route   PUT /api/companies/questions/:id/answer
 router.put('/questions/:id/answer', protect, answerQuestion);

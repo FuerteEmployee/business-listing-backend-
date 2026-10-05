@@ -346,7 +346,7 @@ exports.rejectListing = async (req, res) => {
     }
 };
 
-// @desc    Request more info from merchant
+// @desc    Request more info from brand owner
 // @route   PUT /api/admin/listings/:id/request-info
 exports.requestMoreInfo = async (req, res) => {
     try {
@@ -377,7 +377,7 @@ exports.requestMoreInfo = async (req, res) => {
             userAgent: req.headers['user-agent']
         });
 
-        res.json({ success: true, msg: 'Info request sent to merchant', listing });
+        res.json({ success: true, msg: 'Info request sent to brand owner', listing });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ success: false, msg: 'Server Error', error: err.message });
@@ -972,7 +972,7 @@ exports.importListings = async (req, res) => {
                             name: ownerText,
                             email: generatedEmail,
                             password: hashedPassword,
-                            role: 'Merchant', // Default role for listing owners
+                            role: 'Brand Owner', // Default role for listing owners
                             status: 'Active',
                             isEmailVerified: true
                         };
@@ -988,7 +988,7 @@ exports.importListings = async (req, res) => {
                         results.errors.push({
                             row: i + 1,
                             name: data.name.trim(),
-                            error: `Account created for merchant "${ownerText}" with simple password: "${simplePassword}" (Email: ${generatedEmail}).`
+                            error: `Account created for brand owner "${ownerText}" with simple password: "${simplePassword}" (Email: ${generatedEmail}).`
                         });
                         
                         // Add to our cached list of users so we don't recreate on duplicate name rows

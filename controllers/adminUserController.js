@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const AdminAuditLog = require('../models/AdminAuditLog');
 const Company = require('../models/Company');
+const { BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 
@@ -191,7 +192,11 @@ exports.updateAdminUser = async (req, res) => {
 
 // ==================== STANDARD USER MANAGEMENT ====================
 
-// @desc    Create standard user (User, Merchant, Company Owner, Brand Owner)
+// Roles an admin may assign from the regular Users screen, and the subset that owns a brand.
+const STANDARD_ROLES = ['User', 'Company Owner', 'Brand Owner'];
+const BRAND_ROLES = ['Brand Owner', 'Company Owner'];
+
+// @desc    Create standard user (User, Company Owner, Brand Owner)
 // @route   POST /api/admin/users/standard
 // @access  Private/Super Admin, Admin
 exports.createUser = async (req, res) => {
@@ -210,8 +215,7 @@ exports.createUser = async (req, res) => {
             }
         }
 
-        const validRoles = ['User', 'Merchant', 'Company Owner', 'Brand Owner'];
-        if (!validRoles.includes(role)) {
+        if (!STANDARD_ROLES.includes(role)) {
             return res.status(400).json({ success: false, msg: 'Invalid regular user role' });
         }
 
@@ -231,7 +235,7 @@ exports.createUser = async (req, res) => {
         });
 
         // Assign Brand if applicable
-        if (role === 'Merchant' && assignedBrand) {
+        if (BRAND_ROLES.includes(role) && assignedBrand) {
             await Company.findByIdAndUpdate(assignedBrand, {
                 owner: user._id,
                 claimed: true
@@ -272,8 +276,7 @@ exports.updateUser = async (req, res) => {
             return res.status(403).json({ success: false, msg: 'Please use the Admin Team manager to edit an administrative account' });
         }
 
-        const validRoles = ['User', 'Merchant', 'Company Owner', 'Brand Owner'];
-        if (role && !validRoles.includes(role)) {
+        if (role && !STANDARD_ROLES.includes(role)) {
             return res.status(400).json({ success: false, msg: 'Cannot elevate regular user to administrative role' });
         }
 
@@ -297,16 +300,16 @@ exports.updateUser = async (req, res) => {
         }
 
         // Handle Brand Assignment
-        if (role === 'Merchant' && assignedBrand) {
-            // Unassign previously owned companies if they change it? 
-            // For now, just assign the new one. (We can remove owner from previously owned if needed, but let's just assign).
+        if (BRAND_ROLES.includes(user.role) && assignedBrand) {
+            // Reassigning the brand: release the previously owned ones first
             await Company.updateMany({ owner: user._id }, { owner: null, claimed: false });
             await Company.findByIdAndUpdate(assignedBrand, {
                 owner: user._id,
                 claimed: true
             });
-        } else if (role !== 'Merchant') {
-            // If they are no longer a merchant, remove ownership
+        } else if (role && !BRAND_ROLES.includes(role)) {
+            // Only strip ownership when the role is explicitly changed away from a brand role;
+            // an edit that leaves the role untouched must not orphan the user's brand.
             await Company.updateMany({ owner: user._id }, { owner: null, claimed: false });
         }
 
@@ -465,18 +468,18 @@ exports.getUserDetailAdmin = async (req, res) => {
             .limit(10)
             .sort({ createdAt: -1 });
 
-        // Find companies owned by this user if they are a Merchant/Owner
-        const isMerchant = ['Merchant', 'Brand Owner', 'Company Owner', 'owner', 'Owner', 'OWNER'].includes(user.role);
+        // Find companies owned by this user if they are a Brand Owner
+        const isBrandOwner = BRAND_SCOPED_ROLES.includes(user.role);
         let myCompanyIds = [];
-        if (isMerchant) {
+        if (isBrandOwner) {
             const companies = await Company.find({ owner: user._id }).select('_id');
             myCompanyIds = companies.map(c => c._id);
         }
 
-        // Get user's enquiries (or enquiries received by their brand if they are a merchant)
+        // Get user's enquiries (or enquiries received by their brand if they are a brand owner)
         const Enquiry = require('../models/Enquiry');
         let enquiriesQuery = { userId: user._id };
-        if (isMerchant) {
+        if (isBrandOwner) {
             enquiriesQuery = { businessIds: { $in: myCompanyIds } };
         }
 
@@ -496,7 +499,7 @@ exports.getUserDetailAdmin = async (req, res) => {
         };
 
         let ownedCompany = null;
-        if (user.role === 'Merchant' || user.role === 'Brand Owner' || user.role === 'Company Owner') {
+        if (BRAND_ROLES.includes(user.role)) {
             ownedCompany = await Company.findOne({ owner: user._id }).select('_id name');
         }
 

@@ -127,7 +127,7 @@ exports.addReview = async (req, res) => {
                 type: 'Review',
                 title: 'New Review Received',
                 message: `Someone just left a ${rating}-star review for ${company.name}`,
-                link: `/merchant/reviews`,
+                link: `/brand/reviews`,
                 metadata: { reviewId: review._id, businessId: company._id }
             });
         }
@@ -369,7 +369,7 @@ exports.updateReviewStatus = async (req, res) => {
             let message = `Your review for ${review.businessId.name || 'a business'} has been ${status.toLowerCase()}.`;
             
             if (req.body.merchantReply) {
-                title = 'New Merchant Reply';
+                title = 'New Brand Owner Reply';
                 message = `The owner of ${review.businessId.name || 'the business'} has responded to your review.`;
             }
 
@@ -459,9 +459,9 @@ exports.getUserReviews = async (req, res) => {
     }
 };
 
-// @desc    Merchant Reply to a review
+// @desc    Brand Owner Reply to a review
 // @route   PUT /api/reviews/:id/reply
-// @access  Private (Merchant)
+// @access  Private (Brand Owner)
 exports.replyToReview = async (req, res) => {
     try {
         const { text } = req.body;
@@ -493,7 +493,7 @@ exports.replyToReview = async (req, res) => {
                 targetId: review._id,
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent'],
-                notes: `Merchant ${req.user.name} replied to review on '${review.businessId.name}'`
+                notes: `Brand Owner ${req.user.name} replied to review on '${review.businessId.name}'`
             });
         } catch (auditErr) {
             console.error('Failed to log review reply audit:', auditErr.message);
@@ -520,16 +520,16 @@ exports.replyToReview = async (req, res) => {
     }
 };
 
-// @desc    Merchant Flag/Escalate a review
+// @desc    Brand Owner Flag/Escalate a review
 // @route   POST /api/reviews/:id/flag
-// @access  Private (Merchant)
-exports.flagReviewMerchant = async (req, res) => {
+// @access  Private (Brand Owner)
+exports.flagReviewBrand = async (req, res) => {
     try {
         const { reason, description } = req.body;
         const review = await Review.findById(req.params.id).populate('businessId');
         if (!review) return res.status(404).json({ msg: 'Review not found' });
 
-        // Verify Ownership (Merchants can only flag reviews for their own business)
+        // Verify Ownership (Brand Owners can only flag reviews for their own business)
         if (review.businessId.owner.toString() !== req.user.id) {
             return res.status(403).json({ msg: 'Not authorized to flag this review' });
         }
@@ -549,12 +549,12 @@ exports.flagReviewMerchant = async (req, res) => {
     }
 };
 
-// @desc    Get aggregate review stats for merchant's businesses
-// @route   GET /api/reviews/merchant/stats
-// @access  Private (Merchant)
-exports.getMerchantReviewStats = async (req, res) => {
+// @desc    Get aggregate review stats for brand owner's businesses
+// @route   GET /api/reviews/brand/stats
+// @access  Private (Brand Owner)
+exports.getBrandReviewStats = async (req, res) => {
     try {
-        // Find all businesses owned by this merchant
+        // Find all businesses owned by this brand owner
         const companies = await Company.find({ owner: req.user.id }).select('_id');
         const companyIds = companies.map(c => c._id);
 
@@ -597,10 +597,10 @@ exports.getMerchantReviewStats = async (req, res) => {
     }
 };
 
-// @desc    Get all reviews for merchant's businesses
-// @route   GET /api/reviews/merchant/all
-// @access  Private (Merchant)
-exports.getMerchantReviews = async (req, res) => {
+// @desc    Get all reviews for brand owner's businesses
+// @route   GET /api/reviews/brand/all
+// @access  Private (Brand Owner)
+exports.getBrandReviews = async (req, res) => {
     try {
         const companies = await Company.find({ owner: req.user.id }).select('_id');
         const companyIds = companies.map(c => c._id);
@@ -706,9 +706,9 @@ module.exports = {
     voteReview: exports.voteReview,
     reportReview: exports.reportReview,
     replyToReview: exports.replyToReview,
-    flagReviewMerchant: exports.flagReviewMerchant,
-    getMerchantReviewStats: exports.getMerchantReviewStats,
-    getMerchantReviews: exports.getMerchantReviews,
+    flagReviewBrand: exports.flagReviewBrand,
+    getBrandReviewStats: exports.getBrandReviewStats,
+    getBrandReviews: exports.getBrandReviews,
     getMyReviewForBusiness: exports.getMyReviewForBusiness,
     updateUserReview: exports.updateUserReview
 };

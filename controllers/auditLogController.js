@@ -170,7 +170,7 @@ exports.getAuditLogs = async (req, res) => {
         let scopeQuery = null;
 
         const isSystemAdmin = req.user.role === 'Super Admin' || 
-            (req.user.role && !['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role));
+            (req.user.role && !['Brand Owner', 'Company Owner', 'owner', 'Owner', 'OWNER'].includes(req.user.role));
 
         if (!isSystemAdmin) {
             const Company = require('../models/Company');
@@ -409,7 +409,7 @@ exports.exportAuditLogsCsv = async (req, res) => {
         let scopeQuery = null;
 
         const isSystemAdmin = req.user.role === 'Super Admin' || 
-            (req.user.role && !['Brand Owner', 'Company Owner', 'Merchant', 'owner', 'Owner', 'OWNER'].includes(req.user.role));
+            (req.user.role && !['Brand Owner', 'Company Owner', 'owner', 'Owner', 'OWNER'].includes(req.user.role));
 
         if (!isSystemAdmin) {
             const Company = require('../models/Company');

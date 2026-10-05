@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { 
-    getMerchantOffers, createOffer, updateOfferStatus, deleteOffers, trackOfferAction
+    getBrandOffers, createOffer, updateOfferStatus, deleteOffers, trackOfferAction
 } = require('../controllers/offerController');
 const { protect } = require('../middleware/authMiddleware');
 
-router.get('/merchant', protect, getMerchantOffers);
+router.get('/brand', protect, getBrandOffers);
 router.post('/', protect, createOffer);
 router.patch('/:id/status', protect, updateOfferStatus);
 router.delete('/', protect, deleteOffers);
