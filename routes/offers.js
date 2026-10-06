@@ -4,11 +4,14 @@ const {
     getBrandOffers, createOffer, updateOfferStatus, deleteOffers, trackOfferAction
 } = require('../controllers/offerController');
 const { protect } = require('../middleware/authMiddleware');
+const { brandFeature } = require('../middleware/configMiddleware');
 
-router.get('/brand', protect, getBrandOffers);
-router.post('/', protect, createOffer);
-router.patch('/:id/status', protect, updateOfferStatus);
-router.delete('/', protect, deleteOffers);
+const offersEnabled = brandFeature('offersdeals');
+
+router.get('/brand', protect, offersEnabled, getBrandOffers);
+router.post('/', protect, offersEnabled, createOffer);
+router.patch('/:id/status', protect, offersEnabled, updateOfferStatus);
+router.delete('/', protect, offersEnabled, deleteOffers);
 router.post('/:id/track', trackOfferAction); // Public for tracking
 
 module.exports = router;

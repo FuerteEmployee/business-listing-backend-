@@ -7,7 +7,17 @@ const State = require('../models/State');
 const City = require('../models/City');
 const Area = require('../models/Area');
 const slugify = require('slugify');
-const { isBrandScoped } = require('../middleware/authMiddleware');
+const { isBrandScoped, isAdminUser } = require('../middleware/authMiddleware');
+
+// Moderation, ranking and trust fields only an admin may set. A brand owner (or an anonymous
+// free-listing sign-up) sending them could otherwise self-approve, self-feature or fake a rating.
+const ADMIN_ONLY_LISTING_FIELDS = [
+    'status', 'approvalStatus', 'flags', 'isFlagged', 'suspensionDetails', 'possibleDuplicates',
+    'mergedWith', 'claimVerification', 'plan', 'businessBadgeVerified', 'badgeVerifiedBy',
+    'badgeVerifiedAt', 'verified', 'verificationStatus', 'isClaimPending', 'claimed', 'isFeatured',
+    'rating', 'reviewCount', 'ratingDistribution', 'responseTime', 'manualRank', 'changeHistory'
+];
+const stripAdminOnlyFields = (body) => ADMIN_ONLY_LISTING_FIELDS.forEach(f => delete body[f]);
 const { resolveManualLocation } = require('../utils/resolveManualLocation');
 
 // Escape special regex characters to prevent regex injection.
@@ -79,6 +89,69 @@ const describeMatch = (company, products, services, search) => {
     }
 };
 
+// --- Search query parsing ---------------------------------------------------
+// Words that carry no meaning in a directory search ("plumber IN andheri", "BEST cnc dealers")
+const SEARCH_STOP_WORDS = new Set(['in', 'near', 'at', 'the', 'for', 'and', 'of', 'a', 'an', 'to', 'with', 'me', 'best', 'top', 'shop', 'shops', 'store', 'stores', '&', '-']);
+
+// Plural ending stripped to a stem that, matched as a substring, finds both forms:
+// "machines" -> "machine", "boxes" -> "box", "batteries" -> "batter" (battery/batteries).
+const stemPlural = (word) => {
+    if (word.length <= 3) return word;
+    if (/ies$/.test(word) && word.length > 5) return word.slice(0, -3);
+    if (/(sses|xes|zes|ches|shes)$/.test(word)) return word.slice(0, -2);
+    if (/s$/.test(word) && !/(ss|us|is)$/.test(word)) return word.slice(0, -1);
+    return word;
+};
+
+/**
+ * Split a raw query into what to match. A city typed into the query (one or two words,
+ * e.g. "pune" or "navi mumbai") is lifted out as a city filter.
+ * Returns { phrase, words, city } - phrase/words already singularised and stop-word free.
+ */
+const parseSearchQuery = async (raw) => {
+    let tokens = String(raw).toLowerCase().replace(/[^\p{L}\p{N}&\-\s.]/gu, ' ').split(/\s+/).filter(Boolean);
+
+    let city = null;
+    if (tokens.length > 1) {
+        const candidates = [];
+        for (let i = 0; i < tokens.length; i++) {
+            candidates.push({ start: i, len: 1, text: tokens[i] });
+            if (i + 1 < tokens.length) candidates.push({ start: i, len: 2, text: `${tokens[i]} ${tokens[i + 1]}` });
+        }
+        const names = candidates.filter(c => c.text.length >= 3 && !SEARCH_STOP_WORDS.has(c.text));
+        if (names.length) {
+            const cities = await City.find({
+                name: { $in: names.map(c => new RegExp(`^${escapeRegex(c.text)}$`, 'i')) }
+            }).select('_id name').lean();
+            if (cities.length) {
+                // Prefer the longest match ("navi mumbai" over "mumbai"); keep at least one search word
+                const hit = names
+                    .filter(c => cities.some(ct => ct.name.toLowerCase() === c.text))
+                    .sort((a, b) => b.len - a.len)[0];
+                const remaining = tokens.filter((_, i) => i < hit.start || i >= hit.start + hit.len);
+                if (remaining.some(t => !SEARCH_STOP_WORDS.has(t))) {
+                    city = cities.find(ct => ct.name.toLowerCase() === hit.text);
+                    tokens = remaining;
+                }
+            }
+        }
+    }
+
+    // Phrase: the text as typed, minus filler at either end ("plumber in" -> "plumber"; a name
+    // like "Bed and Breakfast" keeps its inner "and"), with only the last word de-pluralised.
+    let start = 0;
+    let end = tokens.length;
+    while (start < end && SEARCH_STOP_WORDS.has(tokens[start])) start++;
+    while (end > start && SEARCH_STOP_WORDS.has(tokens[end - 1])) end--;
+    const core = start < end ? tokens.slice(start, end) : tokens;
+    const phrase = [...core.slice(0, -1), stemPlural(core[core.length - 1] || '')].join(' ').trim();
+
+    // Words: each meaningful word on its own, de-pluralised
+    const meaningful = tokens.filter(t => !SEARCH_STOP_WORDS.has(t));
+    const words = [...new Set((meaningful.length ? meaningful : tokens).map(stemPlural))].filter(w => w.length >= 2);
+    return { phrase, words, city };
+};
+
 // @desc    Get all companies
 // @route   GET /api/companies
 const getAllCompanies = async (req, res) => {
@@ -116,7 +189,18 @@ const getAllCompanies = async (req, res) => {
         // 1. Basic Filters
         if (city && isValidObjectId(city)) matchQuery.city_id = new mongoose.Types.ObjectId(city);
         if (area && isValidObjectId(area)) matchQuery.area_id = new mongoose.Types.ObjectId(area);
-        if (categoryId && isValidObjectId(categoryId)) matchQuery.category_id = new mongoose.Types.ObjectId(categoryId);
+        // Category filter by id or by slug (autocomplete links use ?category=<slug>), including
+        // its sub-categories so a parent category page is not empty. The slug used to be ignored.
+        let categoryDoc = null;
+        if (categoryId && isValidObjectId(categoryId)) categoryDoc = await Category.findById(categoryId).select('_id').lean();
+        else if (category) categoryDoc = await Category.findOne({ slug: String(category) }).select('_id').lean();
+        if (categoryDoc) {
+            const childIds = await Category.find({ parent: categoryDoc._id }).distinct('_id');
+            matchQuery.category_id = { $in: [categoryDoc._id, ...childIds] };
+        } else if (categoryId || category) {
+            // Unknown category: return nothing rather than every listing
+            matchQuery.category_id = { $in: [] };
+        }
         if (isFeatured !== undefined || featured !== undefined) {
             matchQuery.isFeatured = (isFeatured === 'true' || featured === 'true');
         }
@@ -141,15 +225,14 @@ const getAllCompanies = async (req, res) => {
             matchQuery[dayCloseKey] = { $gte: currentTimeString };
         }
 
-        // 2. Search Query. A listing matches on exactly four parameters:
-        //    business name, category, product name, keyword (business tags + product keywords),
-        //    by literal, case-insensitive substring.
+        // 2. Search. A listing matches a term on four parameters - business name, category,
+        //    product/service name, keyword (business tags + product keywords) - by literal,
+        //    case-insensitive substring. See parseSearchQuery for how the text is read.
         const buildSearch = async (term) => {
             const literal = escapeRegex(term);
             const literalRegex = { $regex: literal, $options: 'i' };
             const Product = require('../models/Product');
             const Service = require('../models/Service');
-            const Category = require('../models/Category');
 
             const [productNameIds, serviceNameIds, productKeywordIds, matchedCategories] = await Promise.all([
                 Product.distinct('listingId', { status: 'Active', name: literalRegex }),
@@ -177,15 +260,24 @@ const getAllCompanies = async (req, res) => {
             return s;
         };
 
-        // Typo tolerance: if the full term finds nothing, retry with the last one or two
-        // letters dropped ("Acmee" -> "Acme"), never below 3 letters. Unlike a fuzzy
-        // subsequence pattern, this cannot match unrelated names.
-        const baseTerm = q ? String(q).trim() : '';
-        const termVariants = [];
-        if (baseTerm) {
-            termVariants.push(baseTerm);
-            for (let cut = 1; cut <= 2 && baseTerm.length - cut >= 3; cut++) {
-                termVariants.push(baseTerm.slice(0, -cut).trim());
+        // Read the query like a directory search box: a city named in it ("plumber in
+        // ahmedabad") becomes the city filter, filler words are dropped and plurals are
+        // reduced ("cnc machines" also finds "CNC Machine").
+        const parsed = q ? await parseSearchQuery(String(q)) : null;
+        if (parsed?.city) matchQuery.city_id = parsed.city._id;
+
+        // Attempts, most precise first; the search widens only while an attempt finds nothing:
+        //   1. the whole phrase
+        //   2. every word matching one of the four parameters, in any order
+        //   3. the phrase with the last 1-2 letters dropped, for a trailing typo ("Acmee")
+        const attempts = [];
+        if (parsed && parsed.phrase) {
+            attempts.push({ mode: 'phrase', terms: [parsed.phrase] });
+            if (parsed.words.length > 1 || (parsed.words.length && parsed.words.join(' ') !== parsed.phrase)) {
+                attempts.push({ mode: 'words', terms: parsed.words });
+            }
+            for (let cut = 1; cut <= 2 && parsed.phrase.length - cut >= 3; cut++) {
+                attempts.push({ mode: 'typo', terms: [parsed.phrase.slice(0, -cut).trim()] });
             }
         }
 
@@ -251,35 +343,66 @@ const getAllCompanies = async (req, res) => {
             return result.length > 0 ? result[0].total : 0;
         };
 
-        // 4. Pagination & Count, widening step by step only when a step finds nothing:
-        //    for each term variant (full term first), try with the city filter, then without.
+        // 4. Pagination & Count. Each attempt runs in the selected city, then - unless the
+        //    city was typed into the query - across all cities. The first attempt is kept
+        //    even when empty so a miss still returns a valid page.
         const withoutCity = (match) => { const m = { ...match }; delete m.city_id; return m; };
         let pipeline = null;
         let total = 0;
         let search = null;
-        const tryMatch = async (match, s) => {
+        let used = null;
+        const tryMatch = async (match, s, info) => {
             const stages = buildPipeline(match, s);
             const count = await countFor(stages);
-            // Keep the first attempt even when empty, so a miss still returns a valid page
             if (count > 0 || pipeline === null) {
                 pipeline = stages;
                 total = count;
                 search = s;
+                used = info;
             }
             return count;
         };
+        const canDropCity = (match) => match.city_id && !parsed?.city;
 
-        if (termVariants.length === 0) {
-            if (await tryMatch(matchQuery, null) === 0 && matchQuery.city_id) {
-                await tryMatch(withoutCity(matchQuery), null);
+        if (attempts.length === 0) {
+            if (await tryMatch(matchQuery, null, { cityRelaxed: false }) === 0 && canDropCity(matchQuery)) {
+                await tryMatch(withoutCity(matchQuery), null, { cityRelaxed: true });
             }
         } else {
-            for (const term of termVariants) {
-                const s = await buildSearch(term);
-                const match = { ...matchQuery, $or: s.or };
-                if (await tryMatch(match, s) > 0) break;
-                if (match.city_id && await tryMatch(withoutCity(match), s) > 0) break;
+            for (const attempt of attempts) {
+                const searches = await Promise.all(attempt.terms.map(buildSearch));
+                // The longest word drives ranking and the "matched on" label in words mode
+                const primary = searches.reduce((a, b) => (b.term.length > a.term.length ? b : a));
+                const match = searches.length === 1
+                    ? { ...matchQuery, $or: primary.or }
+                    : { ...matchQuery, $and: searches.map(s => ({ $or: s.or })) };
+                if (await tryMatch(match, primary, { attempt, cityRelaxed: false }) > 0) break;
+                if (canDropCity(match) && await tryMatch(withoutCity(match), primary, { attempt, cityRelaxed: true }) > 0) break;
             }
+        }
+
+        // Tell the client how the query was interpreted, so the page can say e.g.
+        // "Showing results for 'acme'" or "No results in Pune - showing all cities".
+        const searchMeta = {
+            query: q ? String(q).trim() : '',
+            interpretedAs: used?.attempt ? used.attempt.terms.join(' ') : (parsed?.phrase || ''),
+            mode: used?.attempt?.mode || null,
+            corrected: used?.attempt?.mode === 'typo',
+            detectedCity: parsed?.city ? { _id: parsed.city._id, name: parsed.city.name } : null,
+            cityRelaxed: !!used?.cityRelaxed
+        };
+
+        // Search analytics: record what people look for (first page only, never blocks the reply)
+        if (searchMeta.query && parsedPage === 1) {
+            const AnalyticsEvent = require('../models/AnalyticsEvent');
+            AnalyticsEvent.create({
+                eventType: 'search',
+                sessionId: String(req.headers['x-session-id'] || req.ip || 'anonymous'),
+                userId: req.user?._id,
+                searchQuery: searchMeta.query.toLowerCase().slice(0, 100),
+                locationId: matchQuery.city_id || undefined,
+                resultCount: total
+            }).catch(e => console.error('Search log error:', e.message));
         }
 
         pipeline.push({ $skip: skip });
@@ -304,8 +427,9 @@ const getAllCompanies = async (req, res) => {
         const companyIds = companies.map(c => c._id);
 
         const [allProducts, allServices] = await Promise.all([
-            Product.find({ listingId: { $in: companyIds } }).lean(),
-            Service.find({ listingId: { $in: companyIds } }).lean()
+            // Drafts/archived items must not leak into public results
+            Product.find({ listingId: { $in: companyIds }, status: 'Active' }).lean(),
+            Service.find({ listingId: { $in: companyIds }, status: 'Active' }).lean()
         ]);
 
         const productsByCompany = {};
@@ -347,6 +471,7 @@ const getAllCompanies = async (req, res) => {
 
         res.json({
             data: companies,
+            ...(q && { searchMeta }),
             pagination: {
                 total,
                 page: parsedPage,
@@ -367,6 +492,13 @@ const getAllCompanies = async (req, res) => {
 const createCompany = async (req, res) => {
     try {
         const body = { ...req.body };
+        const isAdmin = await isAdminUser(req.user);
+
+        // Non-admin listings always start Pending, owned by whoever is signed in (if anyone)
+        if (!isAdmin) {
+            stripAdminOnlyFields(body);
+            delete body.owner;
+        }
 
         // Convert latitude/longitude to GeoJSON if provided
         if (body.latitude && body.longitude) {
@@ -380,8 +512,8 @@ const createCompany = async (req, res) => {
         await resolveManualLocation(body);
 
 
-        // For logged-in users, assign them as owner and ensure they are at least a Brand Owner
-        if (req.user) {
+        // For logged-in non-admin users, assign them as owner and ensure they are at least a Brand Owner
+        if (req.user && !isAdmin) {
             body.owner = req.user._id;
             
             // If they are a regular 'User', upgrade them so they can manage their brands
@@ -470,6 +602,7 @@ const updateCompany = async (req, res) => {
         }
 
         const body = { ...req.body };
+        if (!(await isAdminUser(req.user))) stripAdminOnlyFields(body);
         // Sanitize fields
         ['country_id', 'state_id', 'city_id', 'area_id', 'category_id', 'owner', 'latitude', 'longitude', 'gstPan', 'gstNumber', 'subCategory', 'manualCountry', 'manualState', 'manualCity', 'manualArea'].forEach(field => {
             if (body[field] === '' || body[field] === 'manual') body[field] = null;
@@ -733,7 +866,7 @@ const autocomplete = async (req, res) => {
 
         const [categories, companies, products, productKeywords, companyTags] = await Promise.all([
             Category.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
-            Company.find({ name: substring }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
+            Company.find({ name: substring, status: { $in: ['Approved', 'Active'] } }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
             Product.find({ name: substring, status: 'Active' }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
             matchingKeywords(Product, 'keywords', { status: 'Active' }),
             matchingKeywords(Company, 'tags', { status: { $in: ['Approved', 'Active'] } })
@@ -760,7 +893,7 @@ const autocomplete = async (req, res) => {
 
             const [fuzzyCategories, fuzzyCompanies] = await Promise.all([
                 Category.find({ name: fuzzy }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean(),
-                Company.find({ name: fuzzy }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean()
+                Company.find({ name: fuzzy, status: { $in: ['Approved', 'Active'] } }).limit(AUTOCOMPLETE_FETCH_LIMIT).select('name slug -_id').lean()
             ]);
 
             const extra = [

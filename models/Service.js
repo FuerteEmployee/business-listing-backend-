@@ -62,6 +62,9 @@ serviceSchema.pre('save', function(next) {
     next();
 });
 
+// Search and listing pages look services up per listing and by live status
+serviceSchema.index({ listingId: 1, status: 1 });
+
 const Service = mongoose.model('Service', serviceSchema);
 
 module.exports = Service;

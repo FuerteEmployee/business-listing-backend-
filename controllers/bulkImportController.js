@@ -12,6 +12,7 @@ const Area = require('../models/Area');
 const Plan = require('../models/Plan');
 const RBACRole = require('../models/RBACRole');
 const AdminAuditLog = require('../models/AdminAuditLog');
+const { BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
@@ -259,10 +260,20 @@ exports.bulkImport = async (req, res) => {
                         if (!email) throw new Error('Email Address is required');
                         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`"${email}" is not a valid email address`);
 
-                        const role = str(row.role) || 'User';
+                        // Imports create normal users and brand owners only. Admin accounts come from the
+                        // Admin Team screen; accepting any text here let a sheet create a 'Super Admin'.
+                        const roleText = norm(row.role);
+                        const role = !roleText || roleText === 'user' ? 'User'
+                            : ['brand owner', 'brandowner', 'brand', 'owner', 'company owner', 'merchant'].includes(roleText) ? 'Brand Owner'
+                            : null;
+                        if (!role) throw new Error(`Access Tier "${str(row.role)}" is not allowed - use User or Brand Owner`);
                         const status = matchEnum(row.status, USER_STATUSES) || 'Active';
                         const mobile = str(row.mobileNumber);
                         const existing = users.find(u => norm(u.email) === email);
+
+                        if (existing && !['User', ...BRAND_SCOPED_ROLES].includes(existing.role)) {
+                            throw new Error(`${email} is an admin account and cannot be changed by an import`);
+                        }
 
                         if (existing) {
                             if (!updateExisting) {

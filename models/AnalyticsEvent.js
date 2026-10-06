@@ -53,6 +53,8 @@ const analyticsEventSchema = new mongoose.Schema({
         ref: 'City'
     },
     searchQuery: String,
+    // Number of results a search returned (0 = a demand gap worth reviewing)
+    resultCount: Number,
     searchFilters: {
         category: String,
         location: String,

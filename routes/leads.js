@@ -1,13 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { createLead, getLeads, getUserLeads, getBrandLeads, updateLeadStatus, addNote, assignLead, getLeadStats, getLeadById } = require('../controllers/leadController');
-const { protect, admin, optionalAuth, authorize, attachOwnedBrands, BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
+const { createLead, getLeads, getUserLeads, getBrandLeads, updateLeadStatus, addNote, deleteNote, assignLead, getLeadStats, getLeadById } = require('../controllers/leadController');
+const { protect, admin, optionalAuth, authorize, attachOwnedBrands, BRAND_SCOPED_ROLES, isAdminUser } = require('../middleware/authMiddleware');
 const Lead = require('../models/Lead');
+const { brandFeature } = require('../middleware/configMiddleware');
 
 // Middleware to authorize admin or the assigned / owning brand owner.
 // Relies on attachOwnedBrands having populated req.ownedBrandIds.
 const ensureOwnsOrAdminLead = async (req, res, next) => {
-    if (req.user && (req.user.role === 'Admin' || req.user.role === 'Super Admin' || req.user.role === 'admin')) {
+    // Admins (Super Admin or any admin-team RBAC role) see every lead
+    if (await isAdminUser(req.user)) {
         return next();
     }
     try {
@@ -36,7 +38,7 @@ router.post('/', optionalAuth, createLead);
 router.get('/my-leads', protect, getUserLeads);
 
 // Brand Owner: Get leads for the brands they own
-router.get('/brand', protect, authorize(...BRAND_SCOPED_ROLES), attachOwnedBrands, getBrandLeads);
+router.get('/brand', protect, authorize(...BRAND_SCOPED_ROLES), brandFeature('leads'), attachOwnedBrands, getBrandLeads);
 
 // Admin: Get analytics stats
 router.get('/stats', protect, admin, getLeadStats);
@@ -55,5 +57,8 @@ router.patch('/:id/assign', protect, admin, assignLead);
 
 // Brand Owner/Admin: Add note to lead
 router.post('/:id/notes', protect, attachOwnedBrands, ensureOwnsOrAdminLead, addNote);
+
+// Brand Owner/Admin: Delete a note
+router.delete('/:id/notes/:noteId', protect, attachOwnedBrands, ensureOwnsOrAdminLead, deleteNote);
 
 module.exports = router;

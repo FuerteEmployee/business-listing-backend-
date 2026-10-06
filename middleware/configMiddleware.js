@@ -54,4 +54,33 @@ const injectSystemConfig = (panel) => {
     };
 };
 
-module.exports = { injectSystemConfig };
+/**
+ * Enforce the brand panel's hidden features (Master Control > brand) on brand-owner requests.
+ * Brand owners share endpoints such as /api/products with admins and the public site, so this
+ * is applied per route with the panel's feature keys rather than by URL prefix, and only to
+ * brand-scoped users. Run it after `protect`.
+ * @param {...string} features - Master Control keys that switch this route off (any one is enough)
+ */
+const brandFeature = (...features) => {
+    return async (req, res, next) => {
+        try {
+            const { isBrandScoped } = require('./authMiddleware');
+            if (!isBrandScoped(req.user)) return next();
+
+            const config = await SystemConfig.findOne({ panel: 'brand', isActive: true }).select('hiddenFeatures').lean();
+            const hidden = (config && config.hiddenFeatures) || [];
+            if (features.some(f => hidden.includes(f))) {
+                return res.status(403).json({
+                    msg: 'This feature is currently unavailable on this platform.',
+                    code: 'FEATURE_DISABLED'
+                });
+            }
+            next();
+        } catch (err) {
+            console.error('Brand feature check error:', err);
+            next();
+        }
+    };
+};
+
+module.exports = { injectSystemConfig, brandFeature };

@@ -373,5 +373,8 @@ companySchema.pre('save', async function (next) {
 
 // Index for Geospatial search
 companySchema.index({ location: '2dsphere' });
+// Public search always filters on status, usually with city and/or category
+companySchema.index({ status: 1, city_id: 1, category_id: 1 });
+companySchema.index({ owner: 1 });
 
 module.exports = mongoose.model('Company', companySchema);

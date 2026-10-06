@@ -5,14 +5,16 @@ const {
     attachOwnedBrands,
     isBrandScoped,
     ownsBrand,
-    BRAND_SCOPED_ROLES
+    BRAND_SCOPED_ROLES,
+    allowAdminOrBrand,
+    requireAdminOrBrand
 } = require('../middleware/authMiddleware');
 const express = require('express');
 const router = express.Router();
 
 // @desc    Get all brand locations
 // @route   GET /api/brand-locations
-router.get('/', protect, attachOwnedBrands, async (req, res) => {
+router.get('/', protect, requireAdminOrBrand, attachOwnedBrands, async (req, res) => {
     try {
         let query = {};
 
@@ -40,7 +42,7 @@ router.get('/', protect, attachOwnedBrands, async (req, res) => {
 
 // @desc    Create brand location
 // @route   POST /api/brand-locations
-router.post('/', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, async (req, res) => {
+router.post('/', protect, allowAdminOrBrand('listingManagement', 'write'), attachOwnedBrands, async (req, res) => {
     try {
         const { brandId } = req.body;
 
@@ -58,7 +60,7 @@ router.post('/', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attac
 
 // @desc    Update brand location
 // @route   PUT /api/brand-locations/:id
-router.put('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, async (req, res) => {
+router.put('/:id', protect, allowAdminOrBrand('listingManagement', 'write'), attachOwnedBrands, async (req, res) => {
     try {
         let location = await BrandLocation.findById(req.params.id);
         if (!location) return res.status(404).json({ msg: 'Location not found' });
@@ -76,7 +78,7 @@ router.put('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), att
 
 // @desc    Delete brand location
 // @route   DELETE /api/brand-locations/:id
-router.delete('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, async (req, res) => {
+router.delete('/:id', protect, allowAdminOrBrand('listingManagement', 'delete'), attachOwnedBrands, async (req, res) => {
     try {
         const location = await BrandLocation.findById(req.params.id);
         if (!location) return res.status(404).json({ msg: 'Location not found' });

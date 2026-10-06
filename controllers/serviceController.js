@@ -1,6 +1,6 @@
 const Service = require('../models/Service');
 const { generateUniqueSlug } = require('../utils/uniqueSlug');
-const { isBrandScoped, ownsBrand } = require('../middleware/authMiddleware');
+const { isBrandScoped, ownsBrand, isAdminUser } = require('../middleware/authMiddleware');
 
 // Get all services
 exports.getServices = async (req, res) => {
@@ -20,6 +20,9 @@ exports.getServices = async (req, res) => {
             query.listingId = ownsBrand(req, listingId)
                 ? listingId
                 : { $in: req.ownedBrandIds || [] };
+        } else if (!(await isAdminUser(req.user))) {
+            // Public visitors and normal users only ever see live items, never drafts/archived
+            query.status = 'Active';
         }
 
         let dbQuery = Service.find(query)
@@ -81,6 +84,8 @@ exports.getService = async (req, res) => {
             if (!ownsBrand(req, listingId)) {
                 return res.status(403).json({ success: false, error: 'Access Denied: You do not own this service' });
             }
+        } else if (service.status !== 'Active' && !(await isAdminUser(req.user))) {
+            return res.status(404).json({ success: false, error: 'Service not found' });
         }
 
         res.status(200).json({ success: true, data: service });

@@ -4,6 +4,48 @@ const User = require('../models/User');
 const sendEmail = require('../utils/email');
 const { sendSMS } = require('../utils/sms');
 const { sendPushNotification } = require('../utils/push');
+const mongoose = require('mongoose');
+const { BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
+
+const LIVE_LISTING = { $in: ['Approved', 'Active'] };
+const exactRegex = (value) => new RegExp(`^${String(value).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+
+/**
+ * Who should receive a new lead:
+ *  - a lead sent from a listing goes to that listing's owner;
+ *  - a category-only lead goes to the best-scoring active brand owner who has a live
+ *    listing in that category, and is attached to that listing.
+ * Returns { owner, businessId } or null, in which case the lead stays unassigned for an
+ * admin to route. (It used to go to the top-scoring brand owner on the whole platform,
+ * whatever their category, handing the customer's contact details to an unrelated business.)
+ */
+const findLeadAssignee = async ({ businessId, category }) => {
+    if (businessId && mongoose.Types.ObjectId.isValid(businessId)) {
+        const business = await Company.findById(businessId).select('owner');
+        if (!business?.owner) return null;
+        const owner = await User.findOne({ _id: business.owner, status: 'Active' });
+        return owner ? { owner, businessId: business._id } : null;
+    }
+    if (!category) return null;
+
+    const Category = require('../models/Category');
+    const categoryIds = await Category.find({ name: exactRegex(category) }).distinct('_id');
+    const listings = await Company.find({
+        status: LIVE_LISTING,
+        owner: { $ne: null },
+        $or: [{ category_id: { $in: categoryIds } }, { category: exactRegex(category) }]
+    }).select('_id owner').lean();
+    if (!listings.length) return null;
+
+    const owner = await User.findOne({
+        _id: { $in: listings.map(l => l.owner) },
+        role: { $in: BRAND_SCOPED_ROLES },
+        status: 'Active'
+    }).sort({ performanceScore: -1 });
+    if (!owner) return null;
+    const listing = listings.find(l => String(l.owner) === String(owner._id));
+    return { owner, businessId: listing._id };
+};
 
 // ============================================================
 // AI: Lead Scoring Engine
@@ -82,38 +124,33 @@ exports.createLead = async (req, res) => {
             userId: req.user ? req.user._id : null
         });
 
-        // Simple Auto Distribution Logic
-        if (category) {
-            // Find a brand owner with companies in this category who has the best performance score
-            const brandOwner = await User.findOne({
-                role: 'Brand Owner',
-                status: 'Active'
-            }).sort({ performanceScore: -1 });
+        // Auto Distribution: route the lead to the business that can serve it
+        const assignee = await findLeadAssignee({ businessId, category });
+        if (assignee) {
+            const brandOwner = assignee.owner;
+            if (!lead.business) lead.business = assignee.businessId;
+            lead.assignedTo = brandOwner._id;
+            lead.assignedToName = brandOwner.name;
+            lead.assignmentHistory.push({
+                assignedTo: brandOwner.name,
+                assignedBy: 'System Auto-Distribute'
+            });
 
-            if (brandOwner) {
-                lead.assignedTo = brandOwner._id;
-                lead.assignedToName = brandOwner.name;
-                lead.assignmentHistory.push({
-                    assignedTo: brandOwner.name,
-                    assignedBy: 'System Auto-Distribute'
-                });
+            // Update brand owner stats (using findByIdAndUpdate to avoid password validation issues)
+            await User.findByIdAndUpdate(brandOwner._id, {
+                $inc: { 'leadStats.totalAssigned': 1 }
+            });
 
-                // Update brand owner stats (using findByIdAndUpdate to avoid password validation issues)
-                await User.findByIdAndUpdate(brandOwner._id, {
-                    $inc: { 'leadStats.totalAssigned': 1 }
-                });
-
-                // Send Unified Notification (Email, SMS, Push)
-                const { sendNotification } = require('../services/notificationService');
-                await sendNotification({
-                    recipient: brandOwner._id,
-                    type: 'Lead',
-                    title: 'New Lead Auto-Assigned!',
-                    message: `Hello ${brandOwner.name}, a new lead for ${category} has been automatically assigned to you.`,
-                    link: '/brand/leads',
-                    metadata: { leadId: lead._id.toString(), category }
-                }).catch(e => console.error('Lead Notification error:', e));
-            }
+            // Send Unified Notification (Email, SMS, Push)
+            const { sendNotification } = require('../services/notificationService');
+            await sendNotification({
+                recipient: brandOwner._id,
+                type: 'Lead',
+                title: 'New Lead Auto-Assigned!',
+                message: `Hello ${brandOwner.name}, a new lead${category ? ` for ${category}` : ''} has been assigned to you.`,
+                link: '/brand/leads',
+                metadata: { leadId: lead._id.toString(), category }
+            }).catch(e => console.error('Lead Notification error:', e));
         }
 
         await lead.save();
@@ -205,7 +242,9 @@ exports.updateLeadStatus = async (req, res) => {
         if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
 
         // Response Time Tracking Logic
-        if (status && lead.status === 'New' && status !== 'New') {
+        // Only the first contact counts; moving a lead back to New and out again must not
+        // re-trigger the response-time scoring.
+        if (status && lead.status === 'New' && status !== 'New' && !lead.firstContactAt) {
             lead.firstContactAt = new Date();
             const diffMs = lead.firstContactAt - lead.createdAt;
             lead.responseTime = Math.round(diffMs / 60000); // Minutes
@@ -225,7 +264,10 @@ exports.updateLeadStatus = async (req, res) => {
         }
 
         // Conversion Tracking
-        if (status === 'Converted' && lead.status !== 'Converted' && lead.assignedTo) {
+        // Credited once per lead: toggling Converted off and on used to add +50 every time,
+        // letting an owner inflate the score that auto-distribution ranks by.
+        if (status === 'Converted' && lead.status !== 'Converted' && lead.assignedTo && !lead.convertedAt) {
+            lead.convertedAt = new Date();
             await User.findByIdAndUpdate(lead.assignedTo, {
                 $inc: { 'leadStats.totalConverted': 1, performanceScore: 50 }
             });
@@ -289,6 +331,24 @@ exports.addNote = async (req, res) => {
             addedBy: req.user ? req.user.name : 'Admin'
         });
 
+        await lead.save();
+        res.json({ success: true, lead });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// Delete a note from a lead
+// @route   DELETE /api/leads/:id/notes/:noteId
+exports.deleteNote = async (req, res) => {
+    try {
+        const lead = await Lead.findById(req.params.id);
+        if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+
+        const note = lead.notes.id(req.params.noteId);
+        if (!note) return res.status(404).json({ success: false, message: 'Note not found' });
+
+        note.deleteOne();
         await lead.save();
         res.json({ success: true, lead });
     } catch (err) {

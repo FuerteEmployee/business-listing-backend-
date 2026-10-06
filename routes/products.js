@@ -15,7 +15,8 @@ const {
     authorize,
     attachOwnedBrands,
     optionalAuth,
-    BRAND_SCOPED_ROLES
+    BRAND_SCOPED_ROLES,
+    allowAdminOrBrand
 } = require('../middleware/authMiddleware');
 
 // Public routes. The listing endpoint uses optionalAuth so that a signed-in brand
@@ -27,7 +28,9 @@ router.route('/:id').get(optionalAuth, getProduct);
 
 // Protected routes (Admin / brand owners)
 router.use(protect);
-router.use(authorize('Super Admin', ...BRAND_SCOPED_ROLES));
+// Admins with listingManagement:write, or brand owners (ownership checked per item)
+router.use(allowAdminOrBrand('listingManagement', 'write'));
+router.use(require('../middleware/configMiddleware').brandFeature('products'));
 router.use(attachOwnedBrands);
 
 router.route('/').post(createProduct);

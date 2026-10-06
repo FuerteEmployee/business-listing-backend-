@@ -1,12 +1,14 @@
 /**
  * Merchant removal migration: the app now has only Brand Owner and User (plus admin roles).
  *
- * 1. users:         role 'Merchant'      -> 'Brand Owner'. The code no longer recognises
- *                   'Merchant', so without this those accounts lose access to the /brand panel.
+ * 1. users:         role 'Merchant', 'Company Owner', 'owner' (any spelling/case) -> 'Brand Owner'.
+ *                   The app has three kinds of account: admin, Brand Owner and User. 'Merchant'
+ *                   is no longer recognised at all, so without this those accounts lose /brand.
  * 2. systemconfigs: panel 'merchant'     -> 'brand'. The panel key was renamed; an existing
  *                   'merchant' doc would otherwise fail the schema enum and its hidden-feature
  *                   settings would be ignored.
- * 3. orders:        reported only. The Order model and merchant order module were deleted;
+ * 3. notifications: links pointing at the removed /merchant/... pages -> /brand/... .
+ * 4. orders:        reported only. The Order model and merchant order module were deleted;
  *                   the collection is left in place so no data is destroyed.
  *
  * Reversible: the ids of every changed user are printed, so the old role can be restored.
@@ -30,13 +32,14 @@ const DRY_RUN = process.argv.includes('--dry-run');
     console.log(`Connected.${DRY_RUN ? '  [DRY RUN - no changes will be made]' : ''}\n`);
     const db = mongoose.connection.db;
 
-    // 1. Users
+    // 1. Users - every legacy brand-role spelling, matched case-insensitively
     const users = db.collection('users');
-    const merchants = await users.find({ role: 'Merchant' }).project({ _id: 1, email: 1 }).toArray();
-    console.log(`users: ${merchants.length} with role 'Merchant'`);
-    merchants.forEach(u => console.log(`  ${u._id}  ${u.email || ''}`));
-    if (merchants.length && !DRY_RUN) {
-        const r = await users.updateMany({ role: 'Merchant' }, { $set: { role: 'Brand Owner' } });
+    const legacyRole = { role: { $regex: /^\s*(merchant|company owner|owner)\s*$/i } };
+    const legacy = await users.find(legacyRole).project({ _id: 1, email: 1, role: 1 }).toArray();
+    console.log(`users: ${legacy.length} with a legacy brand role`);
+    legacy.forEach(u => console.log(`  ${u._id}  ${u.role}  ${u.email || ''}`));
+    if (legacy.length && !DRY_RUN) {
+        const r = await users.updateMany(legacyRole, { $set: { role: 'Brand Owner' } });
         console.log(`users: updated ${r.modifiedCount} -> 'Brand Owner'`);
     }
 
@@ -44,6 +47,11 @@ const DRY_RUN = process.argv.includes('--dry-run');
     const configs = db.collection('systemconfigs');
     const oldPanel = await configs.findOne({ panel: 'merchant' });
     const newPanel = await configs.findOne({ panel: 'brand' });
+    if (oldPanel) {
+        // These start applying to the brand panel once renamed - check they are still wanted
+        console.log(`
+systemconfigs: 'merchant' doc hides: ${JSON.stringify(oldPanel.hiddenFeatures || [])}`);
+    }
     if (!oldPanel) {
         console.log(`\nsystemconfigs: no 'merchant' panel - nothing to do.`);
     } else if (newPanel) {
@@ -56,7 +64,22 @@ const DRY_RUN = process.argv.includes('--dry-run');
         console.log(`\nsystemconfigs: renamed panel 'merchant' -> 'brand'.`);
     }
 
-    // 3. Orphaned orders collection (report only)
+    // 3. Notification links to removed /merchant pages
+    const notifications = db.collection('notifications');
+    const oldLinks = { link: { $regex: /^\/merchant\// } };
+    const linkCount = await notifications.countDocuments(oldLinks);
+    console.log(`
+notifications: ${linkCount} link(s) to /merchant/...`);
+    if (linkCount && !DRY_RUN) {
+        // /merchant/leads/<id> pointed at an enquiry id, which has no brand page - use the list
+        await notifications.updateMany({ link: { $regex: /^\/merchant\/leads\// } }, { $set: { link: '/brand/leads' } });
+        const r = await notifications.updateMany(oldLinks, [
+            { $set: { link: { $concat: ['/brand/', { $substrCP: ['$link', 10, 1000] }] } } }
+        ]);
+        console.log(`notifications: rewrote ${r.modifiedCount} remaining link(s) -> /brand/...`);
+    }
+
+    // 4. Orphaned orders collection (report only)
     const collections = (await db.listCollections({ name: 'orders' }).toArray()).length;
     if (collections) {
         const count = await db.collection('orders').countDocuments();

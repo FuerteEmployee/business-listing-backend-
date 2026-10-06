@@ -1,12 +1,16 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
+const { BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
 
 // @desc    Get all users
 // @route   GET /api/users
 const getAllUsers = async (req, res) => {
     try {
         const query = {};
-        if (req.query.role) query.role = req.query.role;
+        if (req.query.role) {
+            // "Brand Owner" also covers accounts still carrying a legacy brand-role name
+            query.role = req.query.role === 'Brand Owner' ? { $in: BRAND_SCOPED_ROLES } : req.query.role;
+        }
         const users = await User.find(query).sort({ createdAt: -1 }).select('-password');
         res.json({ success: true, users });
     } catch (err) {

@@ -67,6 +67,10 @@ const leadSchema = new mongoose.Schema({
     firstContactAt: {
         type: Date
     },
+    // Set the first time the lead is marked Converted, so the owner is credited only once
+    convertedAt: {
+        type: Date
+    },
     responseTime: {
         type: Number, // in minutes
         default: 0

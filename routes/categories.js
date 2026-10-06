@@ -6,7 +6,8 @@ const {
     authorize,
     attachOwnedBrands,
     optionalAuth,
-    BRAND_SCOPED_ROLES
+    BRAND_SCOPED_ROLES,
+    allowAdminOrBrand
 } = require('../middleware/authMiddleware');
 
 // Public routes. optionalAuth lets a signed-in brand owner see global categories
@@ -15,8 +16,8 @@ router.get('/', optionalAuth, getAllCategories);
 router.get('/slug/:slug', getCategoryBySlug);
 
 // Protected routes (Admin / brand owners)
-router.post('/', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, createCategory);
-router.put('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, updateCategory);
-router.delete('/:id', protect, authorize('Super Admin', ...BRAND_SCOPED_ROLES), attachOwnedBrands, deleteCategory);
+router.post('/', protect, allowAdminOrBrand('listingManagement', 'write'), attachOwnedBrands, createCategory);
+router.put('/:id', protect, allowAdminOrBrand('listingManagement', 'write'), attachOwnedBrands, updateCategory);
+router.delete('/:id', protect, allowAdminOrBrand('listingManagement', 'delete'), attachOwnedBrands, deleteCategory);
 
 module.exports = router;

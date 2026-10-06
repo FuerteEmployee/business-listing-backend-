@@ -193,8 +193,12 @@ exports.updateAdminUser = async (req, res) => {
 // ==================== STANDARD USER MANAGEMENT ====================
 
 // Roles an admin may assign from the regular Users screen, and the subset that owns a brand.
+// 'Company Owner' is the legacy name for Brand Owner and is still accepted on old records.
 const STANDARD_ROLES = ['User', 'Company Owner', 'Brand Owner'];
 const BRAND_ROLES = ['Brand Owner', 'Company Owner'];
+
+// Filtering on "Brand Owner" must also find accounts still carrying a legacy brand role.
+const roleFilter = (role) => (role === 'Brand Owner' ? { $in: BRAND_SCOPED_ROLES } : role);
 
 // @desc    Create standard user (User, Company Owner, Brand Owner)
 // @route   POST /api/admin/users/standard
@@ -263,7 +267,7 @@ exports.createUser = async (req, res) => {
 // @access  Private/Super Admin, Admin
 exports.updateUser = async (req, res) => {
     try {
-        const { name, email, role, status, mobileNumber, isEmailVerified, performanceScore, password, assignedBrand } = req.body;
+        const { name, email, role, status, mobileNumber, isEmailVerified, performanceScore, password, assignedBrand, previousBrand } = req.body;
 
         let user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ success: false, msg: 'User not found' });
@@ -272,7 +276,10 @@ exports.updateUser = async (req, res) => {
         const adminRolesList = await RBACRole.find().select('name');
         const adminRoles = adminRolesList.map(r => r.name);
         
-        if (adminRoles.includes(user.role)) {
+        // Only User / Brand Owner accounts are edited here. 'Super Admin' is not an RBACRole
+        // document, so checking adminRoles alone let this screen rewrite a Super Admin's
+        // email and password.
+        if (adminRoles.includes(user.role) || !BRAND_SCOPED_ROLES.concat('User').includes(user.role)) {
             return res.status(403).json({ success: false, msg: 'Please use the Admin Team manager to edit an administrative account' });
         }
 
@@ -299,14 +306,20 @@ exports.updateUser = async (req, res) => {
             user.password = await bcrypt.hash(password, salt);
         }
 
-        // Handle Brand Assignment
+        // Handle Brand Assignment. A brand owner can own several listings, so only the one
+        // shown in the form (previousBrand) is swapped for the new one; the rest are kept.
+        // Releasing every owned listing here silently orphaned all but one of them.
         if (BRAND_ROLES.includes(user.role) && assignedBrand) {
-            // Reassigning the brand: release the previously owned ones first
-            await Company.updateMany({ owner: user._id }, { owner: null, claimed: false });
-            await Company.findByIdAndUpdate(assignedBrand, {
-                owner: user._id,
-                claimed: true
-            });
+            const alreadyOwned = await Company.exists({ _id: assignedBrand, owner: user._id });
+            if (!alreadyOwned) {
+                if (previousBrand && String(previousBrand) !== String(assignedBrand)) {
+                    await Company.updateOne({ _id: previousBrand, owner: user._id }, { owner: null, claimed: false });
+                }
+                await Company.findByIdAndUpdate(assignedBrand, {
+                    owner: user._id,
+                    claimed: true
+                });
+            }
         } else if (role && !BRAND_ROLES.includes(role)) {
             // Only strip ownership when the role is explicitly changed away from a brand role;
             // an edit that leaves the role untouched must not orphan the user's brand.
@@ -382,7 +395,7 @@ exports.getAllUsersAdmin = async (req, res) => {
 
         // Filter by role
         if (role) {
-            query.role = role;
+            query.role = roleFilter(role);
         } else if (req.query.roleType === 'admin') {
             const RBACRole = require('../models/RBACRole');
             const adminRoles = await RBACRole.find().select('name');
@@ -1067,7 +1080,7 @@ exports.exportUsersToCsv = async (req, res) => {
 
         let query = {};
         if (status) query.status = status;
-        if (role) query.role = role;
+        if (role) query.role = roleFilter(role);
         if (dateFrom || dateTo) {
             query.createdAt = {};
             if (dateFrom) query.createdAt.$gte = new Date(dateFrom);

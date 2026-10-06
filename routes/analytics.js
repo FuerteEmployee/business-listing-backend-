@@ -14,6 +14,7 @@ const {
     logEvent
 } = require('../controllers/analyticsController');
 const { protect } = require('../middleware/authMiddleware');
+const { brandFeature } = require('../middleware/configMiddleware');
 
 // ==================== DASHBOARD OVERVIEW ====================
 router.get('/dashboard/kpis', protect, getDashboardKPIs);
@@ -26,8 +27,8 @@ router.get('/search', protect, getSearchAnalytics);
 
 // ==================== BUSINESS PERFORMANCE ====================
 router.get('/businesses/performance', protect, getBusinessPerformance);
-router.get('/brand/overview', protect, getBrandAnalyticsOverview);
-router.get('/brand/business/:businessId', protect, getBusinessAnalyticsDetailed);
+router.get('/brand/overview', protect, brandFeature('analytics'), getBrandAnalyticsOverview);
+router.get('/brand/business/:businessId', protect, brandFeature('analytics'), getBusinessAnalyticsDetailed);
 router.get('/business/:businessId/:startDate?/:endDate?', protect, getBusinessAnalytics);
 
 // ==================== REVENUE ANALYTICS ====================

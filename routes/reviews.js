@@ -18,11 +18,12 @@ const {
     updateUserReview
 } = require('../controllers/reviewController');
 const { protect, admin } = require('../middleware/authMiddleware');
+const { brandFeature } = require('../middleware/configMiddleware');
 
 // Brand Owner & Public Routes
 router.get('/latest', getLatestReviews);
-router.get('/brand/stats', protect, getBrandReviewStats);
-router.get('/brand/all', protect, getBrandReviews);
+router.get('/brand/stats', protect, brandFeature('reviews'), getBrandReviewStats);
+router.get('/brand/all', protect, brandFeature('reviews'), getBrandReviews);
 router.get('/my-review/:businessId', protect, getMyReviewForBusiness);
 router.get('/:businessId', getBusinessReviews);
 router.get('/user/:userId', protect, getUserReviews);

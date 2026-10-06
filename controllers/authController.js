@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { SELF_SERVICE_ROLES, BRAND_SCOPED_ROLES } = require('../middleware/authMiddleware');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -18,6 +19,13 @@ const generateToken = (id, role, name, email, companyId, tokenVersion = 0) => {
 exports.register = async (req, res) => {
     try {
         const { name, email, password, mobileNumber, role } = req.body;
+
+        // Public sign-up may only create a normal User or a Brand Owner. Admin accounts are
+        // created from the Admin Team screen; accepting any role here let anyone register
+        // as 'Super Admin'.
+        if (role && !SELF_SERVICE_ROLES.includes(role)) {
+            return res.status(400).json({ msg: 'Invalid account type' });
+        }
 
         let user = await User.findOne({ email });
         if (user) {
@@ -48,7 +56,7 @@ exports.register = async (req, res) => {
         });
 
         // Auto-create company for brand owners
-        const isBrandOwner = ['Brand Owner', 'Company Owner', 'owner', 'Owner', 'OWNER'].includes(user.role);
+        const isBrandOwner = BRAND_SCOPED_ROLES.includes(user.role);
         if (isBrandOwner) {
             const CategoryModel = require('../models/Category');
             const CompanyModel = require('../models/Company');

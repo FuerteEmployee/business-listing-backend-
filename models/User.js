@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+// Old names for the Brand Owner role, lower-cased
+const LEGACY_BRAND_ROLES = ['merchant', 'company owner', 'owner', 'brand owner'];
+
 const userSchema = new mongoose.Schema({
     name: {
         type: String,
@@ -38,9 +41,10 @@ const userSchema = new mongoose.Schema({
     role: {
         type: String,
         default: 'User',
-        // The Merchant role was retired in favour of Brand Owner. Coerce it here so no code
-        // path (create, save, insertMany or an update query) can store a Merchant account.
-        set: (value) => (typeof value === 'string' && value.trim().toLowerCase() === 'merchant' ? 'Brand Owner' : value)
+        // Non-admin accounts are either 'User' or 'Brand Owner'. The retired brand-role names
+        // (Merchant, Company Owner, owner/Owner/OWNER) are coerced here so no code path
+        // (create, save, insertMany or an update query) can store one again.
+        set: (value) => (typeof value === 'string' && LEGACY_BRAND_ROLES.includes(value.trim().toLowerCase()) ? 'Brand Owner' : value)
     },
     status: {
         type: String,

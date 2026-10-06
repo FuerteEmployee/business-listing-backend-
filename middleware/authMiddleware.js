@@ -62,6 +62,46 @@ const isBrandScoped = (user) => !!user
     && BRAND_SCOPED_ROLES.includes(user.role);
 exports.isBrandScoped = isBrandScoped;
 
+/**
+ * The platform has three kinds of account:
+ *   - admin:       Super Admin, or a custom RBAC role (RBACRole document) - sees everything
+ *   - brand owner: BRAND_SCOPED_ROLES - sees only the brands they own
+ *   - user:        'User' - public side only
+ * Anything else (e.g. a retired 'Merchant' role that was never migrated) is treated as a
+ * plain user, so an unknown role can never fall through to admin-level access.
+ */
+const isAdminUser = async (user) => {
+    if (!user || !user.role) return false;
+    if (user.role === 'Super Admin') return true;
+    if (user.role === 'User' || BRAND_SCOPED_ROLES.includes(user.role)) return false;
+    return !!(await RBACRole.exists({ name: user.role }));
+};
+exports.isAdminUser = isAdminUser;
+
+/** Roles a public sign-up or a non-admin import may create. */
+exports.SELF_SERVICE_ROLES = ['User', 'Brand Owner'];
+
+/**
+ * Admins (checked against RBAC `module`/`action`) or brand owners (whose ownership is
+ * enforced in the controller). Plain users and unknown roles get 403.
+ */
+exports.allowAdminOrBrand = (module, action) => (req, res, next) => {
+    if (!req.user || !req.user.role) {
+        return res.status(401).json({ msg: 'Authentication required' });
+    }
+    if (isBrandScoped(req.user)) return next();
+    return exports.checkPermission(module, action)(req, res, next);
+};
+
+/** Admins or brand owners only - for panel endpoints with no single RBAC module. */
+exports.requireAdminOrBrand = async (req, res, next) => {
+    if (!req.user || !req.user.role) {
+        return res.status(401).json({ msg: 'Authentication required' });
+    }
+    if (isBrandScoped(req.user) || await isAdminUser(req.user)) return next();
+    return res.status(403).json({ msg: 'Not authorized to access this route' });
+};
+
 /** True when `listingId` is one of the brands owned by the requesting user. */
 exports.ownsBrand = (req, listingId) => !!listingId
     && (req.ownedBrandIds || []).some(id => id.toString() === listingId.toString());

@@ -20,7 +20,7 @@ const {
     deleteQuestion,
     downloadBrochure
 } = require('../controllers/companyController');
-const { protect, attachOwnedBrands, checkPermission, optionalAuth } = require('../middleware/authMiddleware');
+const { protect, attachOwnedBrands, checkPermission, optionalAuth, allowAdminOrBrand } = require('../middleware/authMiddleware');
 
 // @route   GET /api/companies/autocomplete
 router.get('/autocomplete', autocomplete);
@@ -35,10 +35,11 @@ router.get('/slug/:slug', getCompanyBySlug);
 router.post('/', optionalAuth, createCompany);
 
 // @route   PUT /api/companies/:id
-router.put('/:id', protect, attachOwnedBrands, updateCompany);
+// Admins, or the brand owner of this listing (checked in the controller). Plain users get 403.
+router.put('/:id', protect, allowAdminOrBrand('listingManagement', 'write'), attachOwnedBrands, updateCompany);
 
 // @route   DELETE /api/companies/:id
-router.delete('/:id', protect, attachOwnedBrands, deleteCompany);
+router.delete('/:id', protect, allowAdminOrBrand('listingManagement', 'delete'), attachOwnedBrands, deleteCompany);
 
 // @route   POST /api/companies/:id/claim
 router.post('/:id/claim', protect, claimCompany);

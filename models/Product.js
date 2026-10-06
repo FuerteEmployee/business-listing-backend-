@@ -90,6 +90,10 @@ productSchema.pre('save', function(next) {
     next();
 });
 
+// Search and listing pages look products up per listing and by live status
+productSchema.index({ listingId: 1, status: 1 });
+productSchema.index({ status: 1, keywords: 1 });
+
 const Product = mongoose.model('Product', productSchema);
 
 module.exports = Product;
