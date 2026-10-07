@@ -31,7 +31,12 @@ const productSchema = new mongoose.Schema({
     categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
     subCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },
     brandId: { type: mongoose.Schema.Types.ObjectId, ref: 'Brand' },
-    
+
+    // Free-text manufacturer/brand label shown on product cards (e.g. "HAVELLS").
+    // Opt-in: only displayed when showBrandLabel is true and brandLabel is set.
+    brandLabel: { type: String, trim: true },
+    showBrandLabel: { type: Boolean, default: false },
+
     sku: { type: String, required: true, unique: true },
     price: { type: Number, min: 0 },
     minPrice: { type: Number, min: 0 },
